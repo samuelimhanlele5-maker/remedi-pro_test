@@ -8,7 +8,7 @@ interface AuthContextType {
   login: (email: string, pass: string) => Promise<void>;
   register: (email: string, pass: string, fullName: string, role?: string) => Promise<void>;
   logout: () => void;
-  resetPassword: (email: string, newPass: string) => Promise<void>;
+  resetPassword: (email: string, newPass: string, currentPass?: string) => Promise<void>;
   updateProfile: (data: { fullName?: string; bio?: string; role?: UserRole }) => Promise<void>;
   switchRole: (role: UserRole) => Promise<void>;
 }
@@ -60,8 +60,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem(LOCAL_STORAGE_TOKEN_KEY);
   };
 
-  const resetPassword = async (email: string, newPass: string) => {
-    await api.resetPassword({ email, newPassword: newPass });
+  const resetPassword = async (email: string, newPass: string, currentPass?: string) => {
+    await api.resetPassword({ email, newPassword: newPass, currentPassword: currentPass });
   };
 
   const updateProfile = async (data: { fullName?: string; bio?: string; role?: UserRole }) => {

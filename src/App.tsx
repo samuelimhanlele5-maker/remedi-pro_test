@@ -102,12 +102,6 @@ function MainApp() {
             </div>
           </div>
 
-          <button
-            onClick={handleExitCbt}
-            className="px-3 py-1.5 text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
-          >
-            Exit Exam
-          </button>
         </header>
 
         <main className="flex-1 p-4 sm:p-6 overflow-y-auto">

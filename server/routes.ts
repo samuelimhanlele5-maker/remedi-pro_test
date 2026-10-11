@@ -163,7 +163,7 @@ apiRouter.post('/auth/login', (req: Request, res: Response) => {
 });
 
 apiRouter.post('/auth/reset-password', (req: Request, res: Response) => {
-  const { email, newPassword } = req.body;
+  const { email, newPassword, currentPassword } = req.body;
   if (!email || !newPassword) {
     return res.status(400).json({ error: 'Email and new password are required.' });
   }
@@ -184,6 +184,15 @@ apiRouter.post('/auth/reset-password', (req: Request, res: Response) => {
 
   if (!user) {
     return res.status(404).json({ error: 'No user account found with that email address.' });
+  }
+
+  if (authUser.id === user.id) {
+    if (user.id === 'usr_admin' && process.env.ADMIN_PASSWORD) {
+      return res.status(400).json({ error: 'The admin password is changed in the Vercel settings (ADMIN_PASSWORD).' });
+    }
+    if (!verifyPassword(String(currentPassword || '').trim(), user.password).ok) {
+      return res.status(403).json({ error: 'Your current password is not correct.' });
+    }
   }
 
   dbManager.update((state) => {
@@ -2138,8 +2147,7 @@ apiRouter.post('/cbt/verify-code', (req: Request, res: Response) => {
   const c = normCode(code);
   const reg = db.registrations.find((r) => r.quizId === quiz.id && r.code === c);
   if (!reg || reg.status === 'cancelled') return res.status(403).json({ error: 'Invalid or cancelled exam code.' });
-  if (reg.attemptId) return res.status(403).json({ error: 'This exam code has already been used.' });
-  return res.json({ name: reg.name, email: reg.email });
+  return res.json({ name: reg.name, email: reg.email, used: !!reg.attemptId });
 });
 
 
@@ -2186,3 +2194,29 @@ function canManageHub(req: Request, hub: LearningHub): boolean {
   const u = getAuthUser(req);
   return !!u && !u.disabled && (u.role === 'admin' || u.id === hub.creatorId);
 }
+
+
+// Admin: give a user a temporary password (shown once to the admin to pass on)
+apiRouter.post('/admin/users/:id/reset-password', requireAdmin, (req: Request, res: Response) => {
+  const db = dbManager.getData();
+  const target = db.users.find((u) => u.id === req.params.id);
+  if (!target) return res.status(404).json({ error: 'User not found.' });
+  if (target.id === 'usr_admin') {
+    return res.status(400).json({ error: 'The admin password is changed in the Vercel settings (ADMIN_PASSWORD).' });
+  }
+  const chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let temp = '';
+  for (let i = 0; i < 10; i++) temp += chars[randomInt(chars.length)];
+  dbManager.update((state) => {
+    const t = state.users.find((u) => u.id === target.id);
+    if (t) t.password = hashPassword(temp);
+    state.auditLogs.unshift({
+      id: generateId('log'),
+      action: 'PASSWORD_RESET',
+      details: `Admin set a temporary password for ${target.email}.`,
+      timestamp: new Date().toISOString(),
+      actor: 'Admin',
+    });
+  });
+  return res.json({ tempPassword: temp, email: target.email });
+});

@@ -68,7 +68,13 @@ export const api = {
     });
   },
 
-  async resetPassword(data: { email: string; newPassword: string }) {
+  async adminResetPassword(userId: string) {
+    return request<{ tempPassword: string; email: string }>(`/admin/users/${userId}/reset-password`, {
+      method: 'POST',
+    });
+  },
+
+  async resetPassword(data: { email: string; newPassword: string; currentPassword?: string }) {
     return request<{ message: string }>('/auth/reset-password', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -177,7 +183,7 @@ export const api = {
   },
 
   async verifyCode(quizId: string, code: string) {
-    return request<{ name: string; email: string }>('/cbt/verify-code', {
+    return request<{ name: string; email: string; used?: boolean }>('/cbt/verify-code', {
       method: 'POST',
       body: JSON.stringify({ quizId, code }),
     });

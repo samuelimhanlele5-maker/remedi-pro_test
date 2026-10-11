@@ -260,7 +260,10 @@ export const AdminView: React.FC<AdminViewProps> = ({ onNavigate }) => {
     e.preventDefault();
     try {
       setSettingsSaving(true);
-      const res = await api.updateAdminSettings(settingsForm);
+      const res = await api.updateAdminSettings({
+        ...settingsForm,
+        currency: settingsForm.currency ? settingsForm.currency : 'NGN',
+      });
       setSettings(res.settings);
       setSettingsForm(res.settings);
       showToast('System & Payment settings updated successfully.');
@@ -281,6 +284,17 @@ export const AdminView: React.FC<AdminViewProps> = ({ onNavigate }) => {
       showToast(`User ${targetUser.email} status updated.`);
     } catch (e: any) {
       alert(e.message || 'Failed to update user status.');
+    }
+  };
+
+  // Give a user a temporary password
+  const handleResetUserPassword = async (targetUser: User) => {
+    if (!confirm(`Set a temporary password for ${targetUser.email}? Their old password will stop working.`)) return;
+    try {
+      const res = await api.adminResetPassword(targetUser.id);
+      window.prompt(`Temporary password for ${res.email}. Copy it and send it to them, then ask them to change it in Settings:`, res.tempPassword);
+    } catch (e: any) {
+      alert(e.message || 'Failed to reset password.');
     }
   };
 
@@ -936,9 +950,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ onNavigate }) => {
                 <input
                   type="number"
                   min={1}
-                  value={settingsForm.trialDurationDays || 14}
+                  value={settingsForm.trialDurationDays ?? ''}
                   onChange={(e) =>
-                    setSettingsForm({ ...settingsForm, trialDurationDays: Number(e.target.value) })
+                    setSettingsForm({
+                      ...settingsForm,
+                      trialDurationDays: e.target.value === '' ? undefined : Number(e.target.value),
+                    })
                   }
                   className="w-full px-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl"
                 />
@@ -951,11 +968,11 @@ export const AdminView: React.FC<AdminViewProps> = ({ onNavigate }) => {
                 <input
                   type="number"
                   min={1}
-                  value={settingsForm.paidAccessDurationDays || 30}
+                  value={settingsForm.paidAccessDurationDays ?? ''}
                   onChange={(e) =>
                     setSettingsForm({
                       ...settingsForm,
-                      paidAccessDurationDays: Number(e.target.value),
+                      paidAccessDurationDays: e.target.value === '' ? undefined : Number(e.target.value),
                     })
                   }
                   className="w-full px-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl"
@@ -969,9 +986,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ onNavigate }) => {
                 <input
                   type="number"
                   min={0}
-                  value={settingsForm.accessFeeAmount || 5000}
+                  value={settingsForm.accessFeeAmount ?? ''}
                   onChange={(e) =>
-                    setSettingsForm({ ...settingsForm, accessFeeAmount: Number(e.target.value) })
+                    setSettingsForm({
+                      ...settingsForm,
+                      accessFeeAmount: e.target.value === '' ? undefined : Number(e.target.value),
+                    })
                   }
                   className="w-full px-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl"
                 />
@@ -983,7 +1003,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onNavigate }) => {
                 </label>
                 <input
                   type="text"
-                  value={settingsForm.currency || 'NGN'}
+                  value={settingsForm.currency ?? ''}
                   onChange={(e) =>
                     setSettingsForm({ ...settingsForm, currency: e.target.value.toUpperCase() })
                   }
@@ -1228,7 +1248,15 @@ export const AdminView: React.FC<AdminViewProps> = ({ onNavigate }) => {
                           {u.disabled ? 'Disabled' : 'Active'}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-right">
+                      <td className="py-3 px-4 text-right space-x-2 whitespace-nowrap">
+                        {u.id !== 'usr_admin' && (
+                          <button
+                            onClick={() => handleResetUserPassword(u)}
+                            className="px-3 py-1 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
+                          >
+                            Reset Password
+                          </button>
+                        )}
                         <button
                           onClick={() => handleToggleDisableUser(u)}
                           className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${

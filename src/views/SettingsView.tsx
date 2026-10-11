@@ -13,6 +13,7 @@ import {
 
 export const SettingsView: React.FC = () => {
   const { user, resetPassword } = useAuth();
+  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [savingPassword, setSavingPassword] = useState(false);
@@ -40,8 +41,9 @@ export const SettingsView: React.FC = () => {
     try {
       setSavingPassword(true);
       if (user?.email) {
-        await resetPassword(user.email, newPassword);
+        await resetPassword(user.email, newPassword, currentPassword);
         setPasswordMsg({ type: 'success', text: 'Password successfully updated.' });
+        setCurrentPassword('');
         setNewPassword('');
         setConfirmPassword('');
       }
@@ -92,6 +94,17 @@ export const SettingsView: React.FC = () => {
             <span>{passwordMsg.text}</span>
           </div>
         )}
+
+        <div>
+          <label className="block text-xs font-semibold text-slate-700 mb-1">Current Password</label>
+          <PasswordInput
+            required
+            placeholder="Your current password"
+            value={currentPassword}
+            onChange={(e) => setCurrentPassword(e.target.value)}
+            className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>

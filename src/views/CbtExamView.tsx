@@ -115,6 +115,17 @@ export const CbtExamView: React.FC<CbtExamViewProps> = ({
     loadQuiz();
   }, [quizIdOrCode, user]);
 
+  // Warn before closing the page or going back in the middle of an exam
+  useEffect(() => {
+    if (phase !== 'taking') return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [phase]);
+
   // After a private quiz's questions arrive, continue into the exam
   const [pendingStart, setPendingStart] = useState<{ name: string; email: string } | null>(null);
   useEffect(() => {
@@ -151,8 +162,10 @@ export const CbtExamView: React.FC<CbtExamViewProps> = ({
     try {
       let nameToUse = participantName.trim();
       let emailToUse = participantEmail.trim();
+      let codeUsed = false;
       if (priv) {
         const v = await api.verifyCode(quiz.id, accessCode.trim());
+        codeUsed = !!v.used;
         nameToUse = v.name;
         emailToUse = v.email;
         setParticipantName(v.name);
@@ -160,13 +173,13 @@ export const CbtExamView: React.FC<CbtExamViewProps> = ({
       }
       const res = await api.checkAccess(quiz.id, emailToUse);
 
-      if (res.schedule && res.schedule.status === 'upcoming') {
+      if (res.canAttempt && res.schedule && res.schedule.status === 'upcoming') {
         setGateError(
           `This mock has not opened yet. It opens on ${new Date(res.schedule.opensAt || '').toLocaleString()}.`
         );
         return;
       }
-      if (res.schedule && res.schedule.status === 'closed') {
+      if (res.canAttempt && res.schedule && res.schedule.status === 'closed') {
         setGateError(`This mock is closed. It closed on ${new Date(res.schedule.closesAt || '').toLocaleString()}.`);
         return;
       }
@@ -175,6 +188,11 @@ export const CbtExamView: React.FC<CbtExamViewProps> = ({
         setPriorAttempt(res.priorAttempt);
         setSubmittedAttempt(res.priorAttempt);
         setPhase('result');
+        return;
+      }
+
+      if (codeUsed) {
+        setGateError('This exam code has already been used.');
         return;
       }
 
@@ -594,6 +612,13 @@ export const CbtExamView: React.FC<CbtExamViewProps> = ({
                 <span>Enter CBT Exam Session</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
+              <button
+                type="button"
+                onClick={onExit}
+                className="w-full mt-2 py-2.5 text-xs font-semibold text-slate-600 hover:text-slate-900"
+              >
+                Back to home
+              </button>
             </div>
           </form>
         </div>
@@ -737,8 +762,8 @@ export const CbtExamView: React.FC<CbtExamViewProps> = ({
     return (
       <div className="max-w-6xl mx-auto space-y-4 pb-16 font-sans">
         {/* Sticky CBT Top Bar */}
-        <div className="sticky top-16 z-30 bg-slate-900 text-white rounded-xl p-3 sm:p-4 shadow-md flex items-center justify-between gap-3 border border-slate-800">
-          <div className="min-w-0">
+        <div className="sticky top-16 z-30 bg-slate-900 text-white rounded-xl p-3 sm:p-4 shadow-md flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border border-slate-800">
+          <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <span className="text-[10px] text-blue-400 font-bold uppercase tracking-wider block truncate">
                 {quiz.title}
@@ -751,7 +776,7 @@ export const CbtExamView: React.FC<CbtExamViewProps> = ({
               <span className="text-sm font-extrabold text-white">
                 {currentSubjectName}
               </span>
-              <span className="text-xs text-blue-300 font-mono font-bold bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
+              <span className="hidden sm:inline-block text-xs text-blue-300 font-mono font-bold bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
                 Question {activeQuestionIndexInSubject + 1} of {currentSubjectQuestions.length}
               </span>
             </div>
@@ -806,7 +831,7 @@ export const CbtExamView: React.FC<CbtExamViewProps> = ({
           <div className="flex items-center justify-between mb-2">
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600 flex items-center gap-1.5">
               <Layers className="w-3.5 h-3.5 text-blue-600" />
-              <span>CBT Subject Sections (Click any subject to switch immediately):</span>
+              <span>Subjects</span>
             </span>
             <span className="text-[11px] font-mono text-slate-500">
               Total Progress: {answeredCountOverall}/{totalQuestionsOverall} answered
@@ -825,40 +850,19 @@ export const CbtExamView: React.FC<CbtExamViewProps> = ({
                   key={sub}
                   type="button"
                   onClick={() => handleSwitchSubject(sub)}
-                  className={`p-3 rounded-xl text-left border transition-all flex flex-col justify-between relative group ${
+                  className={`px-3 py-2.5 rounded-xl text-left border transition-all flex flex-col justify-center relative group ${
                     isActive
                       ? 'bg-slate-900 border-slate-900 text-white shadow-md ring-2 ring-blue-600 ring-offset-1'
                       : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-800'
                   }`}
                 >
-                  <div className="flex items-center justify-between gap-1 mb-1">
+                  <div className="flex items-center justify-between gap-1">
                     <span className="text-xs font-extrabold truncate">{sub}</span>
-                    {isActive ? (
-                      <span className="text-[9px] font-mono uppercase bg-blue-600 text-white px-1.5 py-0.5 rounded font-bold">
-                        ACTIVE
-                      </span>
-                    ) : isAllDone ? (
+                    {isAllDone && !isActive ? (
                       <span className="text-emerald-600 font-bold text-xs" title="All questions answered">
                         ✓
                       </span>
                     ) : null}
-                  </div>
-
-                  <div className="flex items-center justify-between text-[11px] mt-1 pt-1.5 border-t border-current/10">
-                    <span className={isActive ? 'text-slate-300' : 'text-slate-500'}>
-                      {subQ.length} Questions
-                    </span>
-                    <span
-                      className={`font-mono font-bold px-1.5 py-0.5 rounded text-[10px] ${
-                        isActive
-                          ? 'bg-blue-600/80 text-white'
-                          : isAllDone
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : 'bg-slate-200 text-slate-700'
-                      }`}
-                    >
-                      {answeredInSub}/{subQ.length}
-                    </span>
                   </div>
                 </button>
               );

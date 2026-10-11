@@ -115,7 +115,7 @@ export const CreateQuizView: React.FC<CreateQuizViewProps> = ({
         setDescription(q.description || '');
         setAccessType(q.accessType);
         setMaxAttempts(q.maxAttempts ?? 1);
-        setListedPublicly(q.listedPublicly === true);
+        setListedPublicly(q.accessType === 'private' && q.listedPublicly === true);
         setWindowHours(q.windowHours ?? 24);
         if (q.opensAt) {
           const d = new Date(q.opensAt);
@@ -808,7 +808,10 @@ export const CreateQuizView: React.FC<CreateQuizViewProps> = ({
                 type="radio"
                 name="access"
                 checked={accessType === 'private'}
-                onChange={() => setAccessType('private')}
+                onChange={() => {
+                  setAccessType('private');
+                  setListedPublicly(false);
+                }}
                 className="text-blue-600 focus:ring-blue-500"
               />
               <span>Private (registration + one-time code)</span>

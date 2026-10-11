@@ -188,6 +188,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onTake
             </div>
           )}
 
+          {creatorAccess && !creatorAccess.paymentSystemEnabled && (
+            <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-full bg-emerald-50 border border-emerald-200 text-xs">
+              <span className="font-extrabold text-emerald-700">FREE</span>
+              <span className="text-emerald-800">All creator tools are free right now</span>
+            </div>
+          )}
+
           {/* Requirement 9: Creator Profile/Dashboard Bar */}
           <div className={`bg-slate-900 text-white p-5 rounded-2xl border border-slate-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4 ${creatorAccess?.paymentSystemEnabled ? '' : 'hidden'}`}>
             <div className="flex flex-wrap items-center gap-4 text-xs">

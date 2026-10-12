@@ -82,11 +82,14 @@ apiRouter.post('/auth/register', (req: Request, res: Response) => {
   const isCreatorOrAdmin = assignedRole === 'creator' || assignedRole === 'admin';
   const existingCodes = db.users.map((u) => u.creatorCode).filter(Boolean) as string[];
   const creatorCode = isCreatorOrAdmin ? generateCreatorCode(existingCodes) : undefined;
-  const accessStatus = isCreatorOrAdmin ? 'active' : undefined;
+  const regSettings = dbManager.getData().systemSettings;
+  const trialQuizzes = regSettings.freeTrialEnabled ? Math.max(0, regSettings.freeTrialQuizzes ?? 0) : 0;
+  // Admin: active for a year. Creators: start the free trial set by the admin (a number of free quizzes).
+  const accessStatus =
+    assignedRole === 'admin' ? 'active' : assignedRole === 'creator' ? (trialQuizzes > 0 ? 'trial' : 'expired') : undefined;
   const accessStartedAt = isCreatorOrAdmin ? new Date().toISOString() : undefined;
-  const accessExpiresAt = isCreatorOrAdmin
-    ? new Date(Date.now() + 3600 * 1000 * 24 * (assignedRole === 'admin' ? 365 : 30)).toISOString()
-    : undefined;
+  const accessExpiresAt =
+    assignedRole === 'admin' ? new Date(Date.now() + 3600 * 1000 * 24 * 365).toISOString() : undefined;
 
   const newUser: User = {
     id: generateId('usr'),
@@ -99,7 +102,9 @@ apiRouter.post('/auth/register', (req: Request, res: Response) => {
     accessStatus,
     accessStartedAt,
     accessExpiresAt,
-    accessDurationDays: isCreatorOrAdmin ? 30 : undefined,
+    accessDurationDays: assignedRole === 'admin' ? 365 : undefined,
+    trialQuizzesAllowed: assignedRole === 'creator' ? trialQuizzes : undefined,
+    trialQuizzesUsed: assignedRole === 'creator' ? 0 : undefined,
     createdAt: new Date().toISOString(),
   };
 
@@ -302,12 +307,11 @@ apiRouter.get('/quizzes', (req: Request, res: Response) => {
     list = list.filter((q) => q.creatorId === authUser.id);
   }
 
-  // Private quizzes are hidden from public lists (only the owner and admin can see them) unless the creator lists them
+  // Private quizzes are hidden from every list except for the owner and admin
   {
     list = list.filter(
       (q) =>
         q.accessType !== 'private' ||
-        q.listedPublicly === true ||
         (!!authUser && (authUser.role === 'admin' || authUser.id === q.creatorId))
     );
   }
@@ -524,6 +528,15 @@ apiRouter.post('/quizzes', (req: Request, res: Response) => {
 
   dbManager.update((state) => {
     state.quizzes.unshift(newQuiz);
+    const creatorUser = state.users.find((x) => x.id === authUser.id);
+    if (
+      creatorUser &&
+      creatorUser.role === 'creator' &&
+      creatorUser.accessStatus === 'trial' &&
+      state.systemSettings.paymentSystemEnabled
+    ) {
+      creatorUser.trialQuizzesUsed = (creatorUser.trialQuizzesUsed ?? 0) + 1;
+    }
     state.questions.push(...formattedQuestions);
     state.auditLogs.unshift({
       id: generateId('log'),
@@ -1608,6 +1621,8 @@ apiRouter.get('/admin/creators', requireAdmin, (req: Request, res: Response) => 
       accessStartedAt: c.accessStartedAt,
       accessExpiresAt: c.accessExpiresAt,
       accessDurationDays: c.accessDurationDays,
+      trialQuizzesAllowed: c.trialQuizzesAllowed,
+      trialQuizzesUsed: c.trialQuizzesUsed,
       quizzesCount: creatorQuizzes.length,
       totalParticipants: participantCount,
       learningHubCount: hubCount,
@@ -1938,9 +1953,11 @@ apiRouter.get('/creator/access-status', (req: Request, res: Response) => {
     paymentSystemEnabled: settings.paymentSystemEnabled,
     userRole: user.role,
     creatorCode: user.creatorCode,
-    accessStatus: user.accessStatus || 'active',
+    accessStatus: settings.paymentSystemEnabled ? access.status : user.accessStatus || 'active',
     accessExpiresAt: user.accessExpiresAt || null,
     trialExpiresAt: user.trialExpiresAt || null,
+    trialQuizzesAllowed: user.trialQuizzesAllowed ?? settings.freeTrialQuizzes ?? 0,
+    trialQuizzesUsed: user.trialQuizzesUsed ?? 0,
     canCreateQuiz: access.canCreateQuiz,
     canCreateHub: access.canCreateHub,
     accessFeeAmount: settings.accessFeeAmount,

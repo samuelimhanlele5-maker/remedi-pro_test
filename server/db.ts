@@ -24,6 +24,8 @@ export interface User {
   accessExpiresAt?: string;
   accessDurationDays?: number;
   lastPaymentVerifiedAt?: string;
+  trialQuizzesAllowed?: number; // free quizzes this creator started with
+  trialQuizzesUsed?: number; // free quizzes used so far
 }
 
 export interface BankPaymentDetails {
@@ -38,6 +40,7 @@ export interface SystemSettings {
   paymentSystemEnabled: boolean; // Master switch: ON / OFF
   freeTrialEnabled: boolean;
   trialDurationDays: number;
+  freeTrialQuizzes: number; // free quizzes for each new creator (set by admin)
   paidAccessDurationDays: number;
   requirePaymentForQuizCreation: boolean;
   requirePaymentForHubCreation: boolean;
@@ -331,6 +334,7 @@ const INITIAL_DB: DatabaseSchema = {
     freeTrialEnabled: true,
     trialDurationDays: 14,
     paidAccessDurationDays: 30,
+    freeTrialQuizzes: 3,
     requirePaymentForQuizCreation: true,
     requirePaymentForHubCreation: true,
     accessFeeAmount: 5000,
@@ -654,6 +658,28 @@ class DatabaseManager {
         canCreateHub: false,
         status: 'disabled',
         message: 'Your account has been disabled by platform administration.',
+      };
+    }
+
+    // Free trial: a number of free quizzes instead of a number of days
+    if (user.accessStatus === 'trial') {
+      const allowed = user.trialQuizzesAllowed ?? settings.freeTrialQuizzes ?? 0;
+      const used = user.trialQuizzesUsed ?? 0;
+      if (used < allowed) {
+        return {
+          paymentSystemEnabled: true,
+          canCreateQuiz: true,
+          canCreateHub: true,
+          status: 'trial',
+          message: `Free trial: ${allowed - used} of ${allowed} quizzes left.`,
+        };
+      }
+      return {
+        paymentSystemEnabled: true,
+        canCreateQuiz: !settings.requirePaymentForQuizCreation,
+        canCreateHub: !settings.requirePaymentForHubCreation,
+        status: 'expired',
+        message: 'Your free trial quizzes are used up. Please activate your subscription to create more.',
       };
     }
 

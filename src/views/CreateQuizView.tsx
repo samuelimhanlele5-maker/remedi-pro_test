@@ -58,7 +58,6 @@ export const CreateQuizView: React.FC<CreateQuizViewProps> = ({
   const [description, setDescription] = useState('');
   const [accessType, setAccessType] = useState<'public' | 'private'>('public');
   const [maxAttempts, setMaxAttempts] = useState<number | ''>(1);
-  const [listedPublicly, setListedPublicly] = useState<boolean>(false);
   const [opensAtLocal, setOpensAtLocal] = useState<string>('');
   const [windowHours, setWindowHours] = useState<number | ''>(24);
   const [leaderboardEnabled, setLeaderboardEnabled] = useState(true);
@@ -115,7 +114,6 @@ export const CreateQuizView: React.FC<CreateQuizViewProps> = ({
         setDescription(q.description || '');
         setAccessType(q.accessType);
         setMaxAttempts(q.maxAttempts ?? 1);
-        setListedPublicly(q.accessType === 'private' && q.listedPublicly === true);
         setWindowHours(q.windowHours ?? 24);
         if (q.opensAt) {
           const d = new Date(q.opensAt);
@@ -493,7 +491,6 @@ export const CreateQuizView: React.FC<CreateQuizViewProps> = ({
       scoreScale: finalScale,
       accessType,
       maxAttempts: accessType === 'private' ? 1 : maxAttempts === '' ? 1 : maxAttempts,
-      listedPublicly: accessType === 'private' ? listedPublicly : true,
       opensAt: opensAtLocal ? new Date(opensAtLocal).toISOString() : null,
       windowHours: windowHours === '' ? 24 : windowHours,
       leaderboardEnabled,
@@ -808,10 +805,7 @@ export const CreateQuizView: React.FC<CreateQuizViewProps> = ({
                 type="radio"
                 name="access"
                 checked={accessType === 'private'}
-                onChange={() => {
-                  setAccessType('private');
-                  setListedPublicly(false);
-                }}
+                onChange={() => setAccessType('private')}
                 className="text-blue-600 focus:ring-blue-500"
               />
               <span>Private (registration + one-time code)</span>
@@ -837,17 +831,6 @@ export const CreateQuizView: React.FC<CreateQuizViewProps> = ({
             </p>
           )}
 
-          {accessType === 'private' && (
-            <label className="pt-2 flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={listedPublicly}
-                onChange={(e) => setListedPublicly(e.target.checked)}
-                className="w-4 h-4 rounded border-slate-300"
-              />
-              <span>Also show this quiz in the public list (off = hidden from everyone except you)</span>
-            </label>
-          )}
 
           <div className="pt-3 border-t border-slate-100 mt-3 space-y-2">
             <p className="text-xs font-semibold text-slate-700">Schedule (optional)</p>

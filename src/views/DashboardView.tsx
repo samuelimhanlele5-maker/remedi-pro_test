@@ -234,6 +234,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onTake
                 </span>
               </div>
 
+              {creatorAccess?.accessStatus === 'trial' ? (
+                <div className="flex items-center gap-2 text-slate-300">
+                  <Clock className="w-3.5 h-3.5 text-blue-400" />
+                  <span>
+                    Free trial:{' '}
+                    <strong className="text-emerald-400 font-bold">
+                      {Math.max(0, (creatorAccess.trialQuizzesAllowed ?? 0) - (creatorAccess.trialQuizzesUsed ?? 0))} of{' '}
+                      {creatorAccess.trialQuizzesAllowed ?? 0} quizzes left
+                    </strong>
+                  </span>
+                </div>
+              ) : (
+                <>
               {/* Expiry Date */}
               <div className="flex items-center gap-2 text-slate-300">
                 <Calendar className="w-3.5 h-3.5 text-slate-400" />
@@ -259,6 +272,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onTake
                   </strong>
                 </span>
               </div>
+                </>
+              )}
             </div>
 
             {/* Upgrade / Renew Access Button if payment enabled */}

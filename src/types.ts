@@ -18,6 +18,8 @@ export interface User {
   accessStartedAt?: string;
   accessExpiresAt?: string;
   accessDurationDays?: number;
+  trialQuizzesAllowed?: number;
+  trialQuizzesUsed?: number;
   lastPaymentVerifiedAt?: string;
   onlineTutorialLinks?: TutorialLink[];
   followerCount?: number;
@@ -77,6 +79,7 @@ export interface SystemSettings {
   paymentSystemEnabled: boolean; // Master switch: ON / OFF
   freeTrialEnabled: boolean;
   trialDurationDays: number;
+  freeTrialQuizzes: number;
   paidAccessDurationDays: number;
   requirePaymentForQuizCreation: boolean;
   requirePaymentForHubCreation: boolean;
@@ -122,6 +125,8 @@ export interface CreatorSummary {
   accessStartedAt?: string;
   accessExpiresAt?: string;
   accessDurationDays?: number;
+  trialQuizzesAllowed?: number;
+  trialQuizzesUsed?: number;
   quizzesCount: number;
   totalParticipants: number;
   learningHubCount: number;
@@ -136,6 +141,8 @@ export interface CreatorAccessStatus {
   accessStatus: CreatorAccessState;
   accessExpiresAt?: string | null;
   trialExpiresAt?: string | null;
+  trialQuizzesAllowed?: number;
+  trialQuizzesUsed?: number;
   canCreateQuiz: boolean;
   canCreateHub: boolean;
   accessFeeAmount: number;

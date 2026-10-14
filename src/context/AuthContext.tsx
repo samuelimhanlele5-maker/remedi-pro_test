@@ -40,6 +40,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
+  // One saved login is shared by every tab and the installed app. When it changes in one window
+  // (another account logs in, or someone logs out), every other window switches to the same account
+  // instead of showing one person's name with another person's data.
+  useEffect(() => {
+    const sync = () => {
+      try {
+        const saved = localStorage.getItem(LOCAL_STORAGE_USER_KEY);
+        const token = localStorage.getItem(LOCAL_STORAGE_TOKEN_KEY);
+        const next: User | null = saved && token ? JSON.parse(saved) : null;
+        setUser((cur) => ((cur?.id ?? null) === (next?.id ?? null) ? cur : next));
+      } catch {}
+    };
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === null || e.key === LOCAL_STORAGE_USER_KEY || e.key === LOCAL_STORAGE_TOKEN_KEY) sync();
+    };
+    const onVisible = () => {
+      if (!document.hidden) sync();
+    };
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('focus', sync);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('focus', sync);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
+
   const login = async (email: string, pass: string) => {
     const res = await api.login({ email, password: pass });
     localStorage.setItem(LOCAL_STORAGE_TOKEN_KEY, res.token);

@@ -1950,6 +1950,7 @@ apiRouter.get('/creator/access-status', (req: Request, res: Response) => {
   );
 
   return res.json({
+    userId: user.id,
     paymentSystemEnabled: settings.paymentSystemEnabled,
     userRole: user.role,
     creatorCode: user.creatorCode,

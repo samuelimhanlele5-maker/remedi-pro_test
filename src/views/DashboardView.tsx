@@ -61,7 +61,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onTake
       setHubCount(hubRes.hubs?.length || 0);
 
       if (isCreatorOrAdmin) {
-        api.getCreatorAccessStatus().then(setCreatorAccess).catch(() => {});
+        const expectedUserId = user?.id;
+        api
+          .getCreatorAccessStatus()
+          .then((res) => {
+            if (!res.userId || res.userId === expectedUserId) setCreatorAccess(res);
+          })
+          .catch(() => {});
       }
     } catch (e) {
       console.error('Error loading dashboard data:', e);
@@ -71,8 +77,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onTake
   };
 
   useEffect(() => {
+    setCreatorAccess(null);
     loadDashboardData();
-  }, []);
+  }, [user?.id]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -138,7 +145,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onTake
 
   // Expiry and remaining days calculations (Requirement 9)
   const creatorCode = user?.creatorCode || creatorAccess?.creatorCode || 'REM-CREATOR';
-  const expiryDate = creatorAccess?.accessExpiresAt || user?.accessExpiresAt;
+  const expiryDate = creatorAccess?.accessExpiresAt || undefined;
   const isAccessExpired =
     creatorAccess?.accessStatus === 'expired' ||
     (expiryDate ? new Date(expiryDate).getTime() < Date.now() : false);

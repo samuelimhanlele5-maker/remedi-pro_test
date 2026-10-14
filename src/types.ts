@@ -143,6 +143,7 @@ export interface CreatorAccessStatus {
   trialExpiresAt?: string | null;
   trialQuizzesAllowed?: number;
   trialQuizzesUsed?: number;
+  userId?: string;
   canCreateQuiz: boolean;
   canCreateHub: boolean;
   accessFeeAmount: number;

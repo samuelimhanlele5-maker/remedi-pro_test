@@ -264,6 +264,16 @@ export interface LearningHub {
   isPublic: boolean;
   memberCount?: number;
   materialCount?: number;
+  institution?: string;
+  examBody?: string;
+  subjects?: string[];
+  maxSubjects?: number;
+  joinMode?: 'open' | 'approval';
+  objectives?: string;
+  hubCode?: string;
+  pendingCount?: number;
+  myStatus?: 'owner' | 'active' | 'pending' | 'rejected' | null;
+  myMembership?: HubMember | null;
   createdAt: string;
 
   // Requirement 8: Free or Paid access & Membership Model
@@ -308,6 +318,7 @@ export interface HubMember {
 
   // Selected subjects chosen by member upon joining (Requirement 4 & 5)
   selectedSubjects?: string[];
+  status?: 'active' | 'pending' | 'rejected';
 
   // Membership & payment
   membershipType?: HubMembershipModel;

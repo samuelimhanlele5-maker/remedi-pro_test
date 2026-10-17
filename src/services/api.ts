@@ -272,39 +272,54 @@ export const api = {
   },
 
   // Learning Hubs
-  async getHubs() {
-    return request<{ hubs: LearningHub[] }>('/hubs');
+  async getHubs(q?: string) {
+    return request<{ hubs: LearningHub[] }>(`/hubs${q ? `?q=${encodeURIComponent(q)}` : ''}`);
   },
 
-  async getHub(id: string) {
+  async getHub(idOrCode: string) {
     return request<{
       hub: LearningHub & {
         members: HubMember[];
         materials: HubMaterial[];
         quizzes: Quiz[];
       };
-    }>(`/hubs/${id}`);
+    }>(`/hubs/${encodeURIComponent(idOrCode)}`);
   },
 
-  async createHub(data: {
-    creatorId: string;
-    creatorName: string;
-    title: string;
-    description: string;
-    subject: string;
-    coverColor?: string;
-    isPublic?: boolean;
-  }) {
-    return request<{ hub: LearningHub }>('/hubs', {
+  async createHub(data: Record<string, any>) {
+    return request<{ hub: LearningHub }>('/hubs', { method: 'POST', body: JSON.stringify(data) });
+  },
+
+  async updateHub(id: string, data: Record<string, any>) {
+    return request<{ hub: LearningHub }>(`/hubs/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+  },
+
+  async deleteHub(id: string) {
+    return request<{ ok: boolean }>(`/hubs/${id}`, { method: 'DELETE' });
+  },
+
+  async joinHub(hubId: string, subjects: string[]) {
+    return request<{ success: boolean; status?: string; member?: HubMember; message?: string }>(`/hubs/${hubId}/join`, {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify({ subjects }),
     });
   },
 
-  async joinHub(hubId: string, data: { userId?: string; userName: string; userEmail: string }) {
-    return request<{ success: boolean; member?: HubMember; message?: string }>(`/hubs/${hubId}/join`, {
-      method: 'POST',
-      body: JSON.stringify(data),
+  async setHubMemberStatus(hubId: string, memberId: string, status: 'active' | 'rejected') {
+    return request<{ ok: boolean }>(`/hubs/${hubId}/members/${memberId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ status }),
+    });
+  },
+
+  async removeHubMember(hubId: string, memberId: string) {
+    return request<{ ok: boolean }>(`/hubs/${hubId}/members/${memberId}`, { method: 'DELETE' });
+  },
+
+  async setMySubjects(hubId: string, subjects: string[]) {
+    return request<{ ok: boolean; subjects: string[] }>(`/hubs/${hubId}/my-subjects`, {
+      method: 'PUT',
+      body: JSON.stringify({ subjects }),
     });
   },
 

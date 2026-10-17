@@ -195,6 +195,15 @@ export interface LearningHub {
   currency?: string;
   paymentInstructions?: string;
 
+  // Hub profile (Phase 2)
+  institution?: string;
+  examBody?: string; // e.g. JAMB
+  subjects?: string[]; // subjects offered
+  maxSubjects?: number; // most subjects a student may select (0 = no limit)
+  joinMode?: 'open' | 'approval';
+  objectives?: string;
+  hubCode?: string; // short code used in the shareable link
+
   // Joining Requirements (Requirement 4)
   compulsorySubjects?: string[];
   optionalSubjects?: string[];
@@ -220,6 +229,9 @@ export interface HubMember {
 
   // Selected subjects chosen by member upon joining (Requirement 4 & 5)
   selectedSubjects?: string[];
+
+  // active = full member, pending = waiting for the creator, rejected = declined
+  status?: 'active' | 'pending' | 'rejected';
 
   // Membership & payment
   membershipType?: HubMembershipModel;

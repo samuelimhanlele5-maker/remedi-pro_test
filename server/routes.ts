@@ -1202,70 +1202,174 @@ apiRouter.put('/quizzes/:id/leaderboard/hide-participant', (req: Request, res: R
 // ==========================================
 
 // Get all hubs
+// ==========================================
+// LEARNING HUBS (Phase 2: profile, membership, subject limits)
+// ==========================================
+
+function memberStatus(m: HubMember): 'active' | 'pending' | 'rejected' {
+  return m.status ?? 'active';
+}
+
+function findHubByKey(db: any, key: string): LearningHub | undefined {
+  const k = String(key || '').trim().toUpperCase();
+  return db.learningHubs.find((h: LearningHub) => h.id.toUpperCase() === k || (h.hubCode && h.hubCode.toUpperCase() === k));
+}
+
+function cleanSubjectList(input: any): string[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of input) {
+    const v = String(raw || '').trim().slice(0, 60);
+    if (v && !seen.has(v.toLowerCase())) {
+      seen.add(v.toLowerCase());
+      out.push(v);
+    }
+  }
+  return out.slice(0, 20);
+}
+
+function makeHubCode(existing: string[]): string {
+  const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+  let code = '';
+  do {
+    code = 'HUB-';
+    for (let i = 0; i < 6; i++) code += chars[randomInt(chars.length)];
+  } while (existing.includes(code));
+  return code;
+}
+
+// Validates and cleans the fields a creator can set on a hub
+function readHubFields(body: any): { error?: string; fields?: Partial<LearningHub> } {
+  const title = String(body.title || '').trim();
+  if (!title) return { error: 'Hub name is required.' };
+  if (title.length > 120) return { error: 'Hub name is too long (120 characters at most).' };
+  const subjects = cleanSubjectList(body.subjects);
+  if (subjects.length === 0) return { error: 'Add at least one subject offered by this hub.' };
+  let maxSubjects = parseNullableInt(body.maxSubjects) ?? 0;
+  if (maxSubjects < 0) maxSubjects = 0;
+  if (maxSubjects > subjects.length) maxSubjects = subjects.length;
+  const joinMode = body.joinMode === 'approval' ? 'approval' : 'open';
+  const accessType = body.accessType === 'paid' ? 'paid' : 'free';
+  const fields: Partial<LearningHub> = {
+    title,
+    description: String(body.description || '').trim().slice(0, 2000),
+    institution: String(body.institution || '').trim().slice(0, 120),
+    examBody: String(body.examBody || '').trim().slice(0, 60),
+    subjects,
+    subject: subjects.join(', ').slice(0, 200),
+    maxSubjects,
+    joinMode,
+    accessType,
+    objectives: String(body.objectives || '').trim().slice(0, 2000),
+    isPublic: body.isPublic !== false,
+  };
+  if (accessType === 'paid') {
+    const fee = parseNullableInt(body.membershipFee);
+    fields.membershipFee = fee !== null && fee >= 0 ? fee : 0;
+    fields.paymentInstructions = String(body.paymentInstructions || '').trim().slice(0, 1000);
+  } else {
+    fields.membershipFee = undefined;
+    fields.paymentInstructions = undefined;
+  }
+  return { fields };
+}
+
+// Checks a student's chosen subjects against the hub's list and limit (enforced here, not only on the screen)
+function checkSubjectSelection(hub: LearningHub, input: any): { error?: string; subjects?: string[] } {
+  const offered = hub.subjects || [];
+  const chosen = cleanSubjectList(input);
+  if (offered.length === 0) return { subjects: [] };
+  if (chosen.length === 0) return { error: 'Choose at least one subject.' };
+  const lower = new Map(offered.map((x) => [x.toLowerCase(), x]));
+  const matched: string[] = [];
+  for (const c of chosen) {
+    const real = lower.get(c.toLowerCase());
+    if (!real) return { error: `"${c}" is not offered by this hub.` };
+    matched.push(real);
+  }
+  const max = hub.maxSubjects ?? 0;
+  if (max > 0 && matched.length > max) return { error: `You can choose at most ${max} subject${max === 1 ? '' : 's'}.` };
+  return { subjects: matched };
+}
+
+function viewerHubStatus(db: any, hub: LearningHub, viewer: User | null): 'owner' | 'active' | 'pending' | 'rejected' | null {
+  if (!viewer) return null;
+  if (viewer.id === hub.creatorId) return 'owner';
+  const m = db.hubMembers.find((x: HubMember) => x.hubId === hub.id && x.userEmail.toLowerCase() === viewer.email.toLowerCase());
+  return m ? memberStatus(m) : null;
+}
+
+// List hubs (with optional search)
 apiRouter.get('/hubs', (req: Request, res: Response) => {
   const db = dbManager.getData();
   const viewer = getAuthUser(req);
+  const q = String(req.query.q || '').trim().toLowerCase();
   const hubs = db.learningHubs
-    .filter(
-      (h) =>
-        h.isPublic !== false ||
-        (!!viewer &&
-          (viewer.role === 'admin' ||
-            viewer.id === h.creatorId ||
-            db.hubMembers.some((m) => m.hubId === h.id && m.userEmail.toLowerCase() === viewer.email.toLowerCase())))
-    )
-    .map((hub) => {
-    const memberCount = db.hubMembers.filter((m) => m.hubId === hub.id).length;
-    const materialCount = db.hubMaterials.filter((m) => m.hubId === hub.id).length;
-    return {
+    .filter((h) => {
+      const status = viewerHubStatus(db, h, viewer);
+      const mayList = h.isPublic !== false || !!status || viewer?.role === 'admin';
+      if (!mayList) return false;
+      if (!q) return true;
+      const hay = [h.title, h.description, h.institution, h.examBody, h.subject, ...(h.subjects || []), h.creatorName]
+        .join(' ')
+        .toLowerCase();
+      return hay.includes(q);
+    })
+    .map((hub) => ({
       ...hub,
-      memberCount,
-      materialCount,
-    };
-  });
-
+      memberCount: db.hubMembers.filter((m) => m.hubId === hub.id && memberStatus(m) === 'active').length,
+      materialCount: db.hubMaterials.filter((m) => m.hubId === hub.id).length,
+      myStatus: viewerHubStatus(db, hub, viewer),
+    }));
   return res.json({ hubs });
 });
 
-// Get single hub
+// Get single hub (by id or by the short hub code from a shared link)
 apiRouter.get('/hubs/:id', (req: Request, res: Response) => {
-  const { id } = req.params;
   const db = dbManager.getData();
-
-  const hub = db.learningHubs.find((h) => h.id === id);
+  const hub = findHubByKey(db, req.params.id);
   if (!hub) {
     return res.status(404).json({ error: 'Hub not found.' });
   }
-
-  const members = db.hubMembers.filter((m) => m.hubId === id);
-  const materials = db.hubMaterials
-    .filter((m) => m.hubId === id)
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-  // Link quizzes associated with this creator or materials
-  const creatorQuizzes = db.quizzes.filter((q) => q.creatorId === hub.creatorId);
+  const viewer = getAuthUser(req);
+  const manage = canManageHub(req, hub);
+  const status = viewerHubStatus(db, hub, viewer);
+  const allMembers = db.hubMembers.filter((m) => m.hubId === hub.id);
+  const activeMembers = allMembers.filter((m) => memberStatus(m) === 'active');
+  const myMembership = viewer
+    ? allMembers.find((m) => m.userEmail.toLowerCase() === viewer.email.toLowerCase()) || null
+    : null;
+  const mayReadMaterials = manage || status === 'active';
+  const materials = mayReadMaterials
+    ? db.hubMaterials
+        .filter((m) => m.hubId === hub.id)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    : [];
 
   return res.json({
     hub: {
       ...hub,
-      memberCount: members.length,
-      members: canManageHub(req, hub) ? members : [],
+      memberCount: activeMembers.length,
+      pendingCount: manage ? allMembers.filter((m) => memberStatus(m) === 'pending').length : undefined,
+      members: manage ? allMembers : [],
+      myMembership,
+      myStatus: status,
       materials,
-      quizzes: creatorQuizzes,
+      materialCount: db.hubMaterials.filter((m) => m.hubId === hub.id).length,
+      quizzes: manage ? db.quizzes.filter((q) => q.creatorId === hub.creatorId) : [],
     },
   });
 });
 
 // Create hub
 apiRouter.post('/hubs', (req: Request, res: Response) => {
-  const { title, description, subject, coverColor, isPublic } = req.body;
   const authUser = getAuthUser(req);
   if (!authUser || authUser.disabled || (authUser.role !== 'creator' && authUser.role !== 'admin')) {
     return res.status(401).json({ error: 'Please log in with a creator account to create a learning hub.' });
   }
-  if (!title || !title.trim()) {
-    return res.status(400).json({ error: 'Hub title is required.' });
-  }
+  const parsed = readHubFields(req.body || {});
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
 
   // Access check when payment system is enabled (Requirement 3 & 6)
   const accessCheck = dbManager.checkCreatorAccess(authUser.id);
@@ -1277,17 +1381,19 @@ apiRouter.post('/hubs', (req: Request, res: Response) => {
     });
   }
 
-  const hubId = generateId('hub');
+  const db = dbManager.getData();
   const newHub: LearningHub = {
-    id: hubId,
+    id: generateId('hub'),
     creatorId: authUser.id,
     creatorName: authUser.fullName || 'Creator',
-    title: title.trim(),
-    description: description ? description.trim() : '',
-    subject: subject ? subject.trim() : 'General Sciences',
-    coverColor: coverColor || 'navy',
-    isPublic: isPublic !== false,
+    title: '',
+    description: '',
+    subject: '',
+    coverColor: req.body.coverColor || 'navy',
+    isPublic: true,
+    hubCode: makeHubCode(db.learningHubs.map((h) => h.hubCode || '')),
     createdAt: new Date().toISOString(),
+    ...(parsed.fields as any),
   };
 
   dbManager.update((state) => {
@@ -1304,47 +1410,159 @@ apiRouter.post('/hubs', (req: Request, res: Response) => {
   return res.status(201).json({ hub: newHub });
 });
 
-// Join hub
+// Edit hub (owner or admin)
+apiRouter.put('/hubs/:id', (req: Request, res: Response) => {
+  const db = dbManager.getData();
+  const hub = findHubByKey(db, req.params.id);
+  if (!hub) return res.status(404).json({ error: 'Hub not found.' });
+  if (!canManageHub(req, hub)) return res.status(403).json({ error: 'Only the hub owner or admin can edit this hub.' });
+  const parsed = readHubFields(req.body || {});
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+  dbManager.update((state) => {
+    const t = state.learningHubs.find((h) => h.id === hub.id);
+    if (t) {
+      Object.assign(t, parsed.fields, { updatedAt: new Date().toISOString() });
+      if (!t.hubCode) t.hubCode = makeHubCode(state.learningHubs.map((h) => h.hubCode || ''));
+    }
+  });
+  const updated = dbManager.getData().learningHubs.find((h) => h.id === hub.id);
+  return res.json({ hub: updated });
+});
+
+// Delete hub (owner or admin)
+apiRouter.delete('/hubs/:id', (req: Request, res: Response) => {
+  const db = dbManager.getData();
+  const hub = findHubByKey(db, req.params.id);
+  if (!hub) return res.status(404).json({ error: 'Hub not found.' });
+  if (!canManageHub(req, hub)) return res.status(403).json({ error: 'Only the hub owner or admin can delete this hub.' });
+  dbManager.update((state) => {
+    state.learningHubs = state.learningHubs.filter((h) => h.id !== hub.id);
+    state.hubMembers = state.hubMembers.filter((m) => m.hubId !== hub.id);
+    state.hubMaterials = state.hubMaterials.filter((m) => m.hubId !== hub.id);
+    state.auditLogs.unshift({
+      id: generateId('log'),
+      action: 'HUB_DELETE',
+      details: `Learning Hub "${hub.title}" deleted.`,
+      actor: hub.creatorName,
+      timestamp: new Date().toISOString(),
+    });
+  });
+  return res.json({ ok: true });
+});
+
+// Join (or request to join) a hub, choosing subjects
 apiRouter.post('/hubs/:id/join', (req: Request, res: Response) => {
-  const { id } = req.params;
   const authUser = getAuthUser(req);
   if (!authUser || authUser.disabled) {
     return res.status(401).json({ error: 'Please log in to join a learning hub.' });
   }
-  const userId = authUser.id;
-  const userName = authUser.fullName;
-  const userEmail = authUser.email;
-
-  const cleanEmail = userEmail.trim().toLowerCase();
   const db = dbManager.getData();
-
-  const hub = db.learningHubs.find((h) => h.id === id);
-  if (!hub) {
-    return res.status(404).json({ error: 'Hub not found.' });
+  const hub = findHubByKey(db, req.params.id);
+  if (!hub) return res.status(404).json({ error: 'Hub not found.' });
+  if (hub.creatorId === authUser.id) {
+    return res.status(400).json({ error: 'You own this hub, so you are already its manager.' });
+  }
+  const cleanEmail = authUser.email.trim().toLowerCase();
+  const existing = db.hubMembers.find((m) => m.hubId === hub.id && m.userEmail.toLowerCase() === cleanEmail);
+  if (existing && memberStatus(existing) === 'active') {
+    return res.json({ success: true, status: 'active', message: 'You are already a member of this hub.' });
+  }
+  if (existing && memberStatus(existing) === 'pending') {
+    return res.json({ success: true, status: 'pending', message: 'Your request is already waiting for the hub creator.' });
   }
 
-  const alreadyJoined = db.hubMembers.find(
-    (m) => m.hubId === id && m.userEmail.toLowerCase() === cleanEmail
-  );
+  const picked = checkSubjectSelection(hub, req.body?.subjects);
+  if (picked.error) return res.status(400).json({ error: picked.error });
 
-  if (alreadyJoined) {
-    return res.json({ success: true, message: 'You are already a member of this hub.' });
-  }
+  // Open free hubs admit at once. Approval hubs and paid hubs wait for the creator.
+  // A paid hub is never marked paid here: the creator confirms payment by approving.
+  const needsApproval = (hub.joinMode ?? 'open') === 'approval' || hub.accessType === 'paid';
+  const status: 'active' | 'pending' = needsApproval ? 'pending' : 'active';
 
   const member: HubMember = {
-    id: generateId('hm'),
-    hubId: id,
-    userId: userId || generateId('usr'),
-    userName: userName.trim(),
+    id: existing?.id || generateId('hm'),
+    hubId: hub.id,
+    userId: authUser.id,
+    userName: authUser.fullName.trim(),
     userEmail: cleanEmail,
     joinedAt: new Date().toISOString(),
+    selectedSubjects: picked.subjects,
+    status,
+    isPaid: hub.accessType === 'paid' ? false : undefined,
   };
 
   dbManager.update((state) => {
-    state.hubMembers.push(member);
+    if (existing) {
+      const i = state.hubMembers.findIndex((m) => m.id === existing.id);
+      state.hubMembers[i] = member; // a declined student asking again
+    } else {
+      state.hubMembers.push(member);
+    }
   });
 
-  return res.status(201).json({ success: true, member });
+  const message =
+    status === 'active'
+      ? 'You joined the hub.'
+      : hub.accessType === 'paid'
+      ? 'This is a paid hub. Your request is pending until the hub creator confirms your payment.'
+      : 'Your request was sent. The hub creator will approve it.';
+  return res.status(201).json({ success: true, status, member, message });
+});
+
+// Creator: approve or decline a request
+apiRouter.put('/hubs/:id/members/:memberId', (req: Request, res: Response) => {
+  const db = dbManager.getData();
+  const hub = findHubByKey(db, req.params.id);
+  if (!hub) return res.status(404).json({ error: 'Hub not found.' });
+  if (!canManageHub(req, hub)) return res.status(403).json({ error: 'Only the hub owner or admin can do this.' });
+  const next = req.body?.status;
+  if (next !== 'active' && next !== 'rejected') return res.status(400).json({ error: 'Status must be active or rejected.' });
+  const member = db.hubMembers.find((m) => m.id === req.params.memberId && m.hubId === hub.id);
+  if (!member) return res.status(404).json({ error: 'Member not found.' });
+  dbManager.update((state) => {
+    const t = state.hubMembers.find((m) => m.id === member.id);
+    if (t) {
+      t.status = next;
+      if (next === 'active' && hub.accessType === 'paid') t.isPaid = true; // creator confirmed the payment
+    }
+  });
+  return res.json({ ok: true });
+});
+
+// Remove a member (creator), or leave a hub (the member)
+apiRouter.delete('/hubs/:id/members/:memberId', (req: Request, res: Response) => {
+  const db = dbManager.getData();
+  const hub = findHubByKey(db, req.params.id);
+  if (!hub) return res.status(404).json({ error: 'Hub not found.' });
+  const member = db.hubMembers.find((m) => m.id === req.params.memberId && m.hubId === hub.id);
+  if (!member) return res.status(404).json({ error: 'Member not found.' });
+  const u = getAuthUser(req);
+  const isSelf = !!u && u.id === member.userId;
+  if (!isSelf && !canManageHub(req, hub)) return res.status(403).json({ error: 'Not allowed.' });
+  dbManager.update((state) => {
+    state.hubMembers = state.hubMembers.filter((m) => m.id !== member.id);
+  });
+  return res.json({ ok: true });
+});
+
+// Member: change their own subject selection (limits enforced here)
+apiRouter.put('/hubs/:id/my-subjects', (req: Request, res: Response) => {
+  const authUser = getAuthUser(req);
+  if (!authUser || authUser.disabled) return res.status(401).json({ error: 'Please log in.' });
+  const db = dbManager.getData();
+  const hub = findHubByKey(db, req.params.id);
+  if (!hub) return res.status(404).json({ error: 'Hub not found.' });
+  const member = db.hubMembers.find(
+    (m) => m.hubId === hub.id && m.userEmail.toLowerCase() === authUser.email.toLowerCase()
+  );
+  if (!member || memberStatus(member) === 'rejected') return res.status(403).json({ error: 'You are not a member of this hub.' });
+  const picked = checkSubjectSelection(hub, req.body?.subjects);
+  if (picked.error) return res.status(400).json({ error: picked.error });
+  dbManager.update((state) => {
+    const t = state.hubMembers.find((m) => m.id === member.id);
+    if (t) t.selectedSubjects = picked.subjects;
+  });
+  return res.json({ ok: true, subjects: picked.subjects });
 });
 
 // Add material to hub
@@ -1391,7 +1609,7 @@ apiRouter.get('/hubs/:id/performance', (req: Request, res: Response) => {
   const { id } = req.params;
   const db = dbManager.getData();
 
-  const members = db.hubMembers.filter((m) => m.hubId === id);
+  const members = db.hubMembers.filter((m) => m.hubId === id && memberStatus(m) === 'active');
   const hub = db.learningHubs.find((h) => h.id === id);
 
   const studentEmails = members.map((m) => m.userEmail.toLowerCase());

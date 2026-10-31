@@ -45,22 +45,13 @@ export const BrowseHubView: React.FC<BrowseHubViewProps> = ({ onNavigate }) => {
     setTimeout(() => setToastMessage(null), 3000);
   };
 
-  const handleJoin = async (hub: LearningHub) => {
+  // Joining now needs a subject choice, so it happens on the hub page
+  const handleJoin = (hub: LearningHub) => {
     if (!user) {
       alert('Please sign in to join learning hubs.');
       return;
     }
-    try {
-      const res = await api.joinHub(hub.id, {
-        userId: user.id,
-        userName: user.fullName,
-        userEmail: user.email,
-      });
-      setJoinedHubIds((prev) => [...prev, hub.id]);
-      showToast(res.message || `Joined ${hub.title}!`);
-    } catch (e: any) {
-      alert(e.message || 'Failed to join hub.');
-    }
+    onNavigate('learning-hub', { hubId: hub.id });
   };
 
   const filtered = hubs.filter((h) => {

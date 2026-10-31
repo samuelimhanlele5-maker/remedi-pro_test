@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext.tsx';
 import { api } from '../services/api.ts';
-import { UserRole, CreatorAccessStatus } from '../types.ts';
+import { UserRole, CreatorAccessStatus, LearningHub } from '../types.ts';
+import { HubFormModal } from '../components/HubFormModal.tsx';
 import { CreatorPaymentModal } from '../components/CreatorPaymentModal.tsx';
 import {
   User as UserIcon,
@@ -19,6 +20,9 @@ import {
   Calendar,
   AlertTriangle,
   ArrowRight,
+  BookOpen,
+  Plus,
+  Check,
 } from 'lucide-react';
 
 interface ProfileViewProps {
@@ -33,6 +37,31 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ onNavigate }) => {
   const [saving, setSaving] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [copiedCode, setCopiedCode] = useState(false);
+
+  // Learning hubs: create from here, and see hubs I own or joined
+  const [hubs, setHubs] = useState<LearningHub[]>([]);
+  const [hubFormOpen, setHubFormOpen] = useState(false);
+  const [createdHub, setCreatedHub] = useState<LearningHub | null>(null);
+  const [hubLinkCopied, setHubLinkCopied] = useState(false);
+
+  const loadHubs = async () => {
+    try {
+      const res = await api.getHubs();
+      setHubs(res.hubs || []);
+    } catch {}
+  };
+
+  useEffect(() => {
+    loadHubs();
+  }, []);
+
+  const copyHubLink = async (h: LearningHub) => {
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/?hub=${h.hubCode || h.id}`);
+      setHubLinkCopied(true);
+      setTimeout(() => setHubLinkCopied(false), 2000);
+    } catch {}
+  };
 
   // Creator Access Info
   const [creatorAccess, setCreatorAccess] = useState<CreatorAccessStatus | null>(null);
@@ -350,6 +379,123 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ onNavigate }) => {
           </button>
         </div>
       </form>
+
+      {/* Learning Hub: create here, and see my hubs */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <BookOpen className="w-5 h-5 text-blue-600" />
+            <h2 className="text-sm font-extrabold text-slate-900">Learning Hub</h2>
+          </div>
+          {isCreatorOrAdmin && (
+            <button
+              onClick={() => setHubFormOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 rounded-xl"
+            >
+              <Plus className="w-4 h-4" /> Create Learning Hub
+            </button>
+          )}
+        </div>
+
+        {createdHub && (
+          <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 space-y-2">
+            <p className="text-xs font-bold text-emerald-800">Hub created: {createdHub.title}</p>
+            <p className="text-[11px] text-emerald-700 break-all">
+              {window.location.origin}/?hub={createdHub.hubCode || createdHub.id}
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => copyHubLink(createdHub)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-emerald-800 bg-white border border-emerald-200 rounded-lg"
+              >
+                {hubLinkCopied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                {hubLinkCopied ? 'Link copied' : 'Copy link'}
+              </button>
+              <button
+                onClick={() => onNavigate('learning-hub', { hubId: createdHub.id })}
+                className="px-3 py-1.5 text-xs font-bold text-white bg-emerald-600 rounded-lg"
+              >
+                Open hub
+              </button>
+            </div>
+          </div>
+        )}
+
+        {isCreatorOrAdmin && (
+          <div className="space-y-2">
+            <p className="text-[11px] font-bold text-slate-700">My hubs</p>
+            {hubs.filter((h) => h.myStatus === 'owner').length === 0 ? (
+              <p className="text-[11px] text-slate-500">You have not created a hub yet.</p>
+            ) : (
+              hubs
+                .filter((h) => h.myStatus === 'owner')
+                .map((h) => (
+                  <div key={h.id} className="p-3 rounded-xl border border-slate-200 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-slate-900 truncate">{h.title}</p>
+                      <p className="text-[11px] text-slate-500">
+                        {h.memberCount ?? 0} members · {(h.subjects || []).length} subjects ·{' '}
+                        {h.accessType === 'paid' ? 'Paid' : 'Free'}
+                      </p>
+                    </div>
+                    <div className="flex gap-1.5 shrink-0">
+                      <button
+                        onClick={() => copyHubLink(h)}
+                        className="p-2 text-slate-500 hover:text-blue-600 bg-slate-100 rounded-lg"
+                        title="Copy hub link"
+                      >
+                        <Copy className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => onNavigate('learning-hub', { hubId: h.id })}
+                        className="px-3 py-2 text-xs font-bold text-blue-700 bg-blue-50 rounded-lg"
+                      >
+                        Manage
+                      </button>
+                    </div>
+                  </div>
+                ))
+            )}
+          </div>
+        )}
+
+        <div className="space-y-2">
+          <p className="text-[11px] font-bold text-slate-700">Hubs I joined</p>
+          {hubs.filter((h) => h.myStatus === 'active' || h.myStatus === 'pending').length === 0 ? (
+            <p className="text-[11px] text-slate-500">You have not joined any hub yet. Find one in the Hub tab.</p>
+          ) : (
+            hubs
+              .filter((h) => h.myStatus === 'active' || h.myStatus === 'pending')
+              .map((h) => (
+                <div key={h.id} className="p-3 rounded-xl border border-slate-200 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-slate-900 truncate">{h.title}</p>
+                    <p className="text-[11px] text-slate-500">
+                      {h.myStatus === 'pending' ? 'Waiting for approval' : 'Member'} · by {h.creatorName}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => onNavigate('learning-hub', { hubId: h.id })}
+                    className="px-3 py-2 text-xs font-bold text-blue-700 bg-blue-50 rounded-lg shrink-0"
+                  >
+                    Open
+                  </button>
+                </div>
+              ))
+          )}
+        </div>
+      </div>
+
+      {hubFormOpen && (
+        <HubFormModal
+          onClose={() => setHubFormOpen(false)}
+          onSaved={(h) => {
+            setHubFormOpen(false);
+            setCreatedHub(h);
+            loadHubs();
+          }}
+        />
+      )}
 
       {/* Payment Instructions Modal */}
       <CreatorPaymentModal

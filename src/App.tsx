@@ -27,6 +27,7 @@ function MainApp() {
   const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
   const [takeQuizModalOpen, setTakeQuizModalOpen] = useState<boolean>(false);
   const [registerQuizCode, setRegisterQuizCode] = useState<string | null>(null);
+  const [focusHubId, setFocusHubId] = useState<string | undefined>(undefined);
   const [standaloneLeaderboardQuiz, setStandaloneLeaderboardQuiz] = useState<{ id: string; title: string } | null>(null);
 
   // Check URL params on initial load for shareable link (e.g. ?quiz=REM-UTME-400)
@@ -34,6 +35,10 @@ function MainApp() {
     const params = new URLSearchParams(window.location.search);
     const quizCode = params.get('quiz');
     const regCode = params.get('register');
+    const hubParam = params.get('hub');
+    if (hubParam) {
+      setFocusHubId(hubParam);
+    }
     if (regCode) {
       setRegisterQuizCode(regCode);
     }
@@ -48,6 +53,7 @@ function MainApp() {
     } else {
       setEditQuizId(undefined);
     }
+    setFocusHubId(meta?.hubId ? meta.hubId : undefined);
     setCurrentTab(tab);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -73,6 +79,16 @@ function MainApp() {
       setCurrentTab('dashboard');
     }
   }, [authLoading, user, currentTab]);
+
+  // A hub link (or "Manage" on the Profile page) opens that hub; visitors are asked to log in first
+  useEffect(() => {
+    if (!focusHubId || authLoading) return;
+    if (user) {
+      setCurrentTab('learning-hub');
+    } else {
+      setAuthModalOpen(true);
+    }
+  }, [focusHubId, user, authLoading]);
 
   if (registerQuizCode) {
     return (
@@ -197,6 +213,11 @@ function MainApp() {
             <LearningHubView
               onNavigate={handleNavigate}
               onTakeQuiz={handleStartQuiz}
+              focusHub={focusHubId}
+              onFocusHandled={() => {
+                setFocusHubId(undefined);
+                window.history.replaceState({}, '', window.location.pathname);
+              }}
             />
           )}
 

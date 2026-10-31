@@ -2,576 +2,533 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext.tsx';
 import { api } from '../services/api.ts';
 import { LearningHub, HubMaterial, HubMember, Quiz } from '../types.ts';
-import {
-  BookOpen,
-  Plus,
-  Users,
-  FileText,
-  FileQuestion,
-  GraduationCap,
-  Sparkles,
-  ChevronRight,
-  Send,
-  X,
-  CheckCircle,
-  Clock,
-  Award,
-} from 'lucide-react';
+import { HubFormModal } from '../components/HubFormModal.tsx';
+import { BookOpen, Users, FileText, GraduationCap, Search, Copy, Check, X, Plus, Clock } from 'lucide-react';
 
 interface LearningHubViewProps {
   onNavigate: (tab: string, meta?: any) => void;
   onTakeQuiz: (quizId: string) => void;
+  focusHub?: string; // hub id or code to open (from a shared link or the Profile page)
+  onFocusHandled?: () => void;
 }
 
-export const LearningHubView: React.FC<LearningHubViewProps> = ({ onNavigate, onTakeQuiz }) => {
+type HubDetail = LearningHub & { members: HubMember[]; materials: HubMaterial[]; quizzes: Quiz[] };
+
+export const LearningHubView: React.FC<LearningHubViewProps> = ({ focusHub, onFocusHandled }) => {
   const { user } = useAuth();
   const [hubs, setHubs] = useState<LearningHub[]>([]);
-  const [selectedHub, setSelectedHub] = useState<
-    (LearningHub & { members: HubMember[]; materials: HubMaterial[]; quizzes: Quiz[] }) | null
-  >(null);
-  const [performanceData, setPerformanceData] = useState<any[]>([]);
+  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
-
-  // New Hub Modal
-  const [createModalOpen, setCreateModalOpen] = useState(false);
-  const [newTitle, setNewTitle] = useState('');
-  const [newDesc, setNewDesc] = useState('');
-  const [newSubject, setNewSubject] = useState('Life Sciences & Medical Prep');
-
-  // Add Material Modal
-  const [materialModalOpen, setMaterialModalOpen] = useState(false);
+  const [hub, setHub] = useState<HubDetail | null>(null);
+  const [performance, setPerformance] = useState<any[]>([]);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [editingSubjects, setEditingSubjects] = useState(false);
+  const [message, setMessage] = useState<{ text: string; bad?: boolean } | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [matOpen, setMatOpen] = useState(false);
   const [matTitle, setMatTitle] = useState('');
-  const [matDesc, setMatDesc] = useState('');
   const [matType, setMatType] = useState<'note' | 'tutorial' | 'guide'>('note');
   const [matContent, setMatContent] = useState('');
 
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  const isCreatorOrAdmin = user?.role === 'creator' || user?.role === 'admin';
-
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
+  const say = (text: string, bad = false) => {
+    setMessage({ text, bad });
+    setTimeout(() => setMessage(null), 4000);
   };
 
-  const fetchHubs = async () => {
+  const loadList = async (q?: string) => {
     try {
       setLoading(true);
-      const res = await api.getHubs();
+      const res = await api.getHubs(q);
       setHubs(res.hubs || []);
-      if (res.hubs && res.hubs.length > 0 && !selectedHub) {
-        loadHubDetail(res.hubs[0].id);
-      }
-    } catch (e) {
-      console.error('Error fetching hubs:', e);
+    } catch {
+      say('Could not load hubs.', true);
     } finally {
       setLoading(false);
     }
   };
 
-  const loadHubDetail = async (id: string) => {
+  const openHub = async (idOrCode: string) => {
     try {
-      const res = await api.getHub(id);
-      setSelectedHub(res.hub);
-
-      // If user is creator, load student member performance
-      if (isCreatorOrAdmin) {
-        const perf = await api.getHubPerformance(id);
-        setPerformanceData(perf.performance || []);
+      const res = await api.getHub(idOrCode);
+      setHub(res.hub);
+      setPicked(res.hub.myMembership?.selectedSubjects || []);
+      setEditingSubjects(false);
+      setPerformance([]);
+      const manage = res.hub.myStatus === 'owner' || user?.role === 'admin';
+      if (manage) {
+        try {
+          const perf = await api.getHubPerformance(res.hub.id);
+          setPerformance(perf.performance || []);
+        } catch {}
       }
-    } catch (e) {
-      console.error('Error loading hub detail:', e);
+    } catch (e: any) {
+      say(e.message || 'Hub not found.', true);
     }
   };
 
   useEffect(() => {
-    fetchHubs();
+    loadList();
   }, []);
 
-  const handleCreateHub = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTitle.trim()) return;
+  useEffect(() => {
+    if (focusHub) {
+      openHub(focusHub);
+      onFocusHandled?.();
+    }
+  }, [focusHub]);
 
+  const refresh = async () => {
+    if (hub) await openHub(hub.id);
+    loadList(search || undefined);
+  };
+
+  const manage = !!hub && (hub.myStatus === 'owner' || user?.role === 'admin');
+  const max = hub?.maxSubjects ?? 0;
+  const needsApproval = !!hub && ((hub.joinMode ?? 'open') === 'approval' || hub.accessType === 'paid');
+
+  const toggleSubject = (s: string) => {
+    setPicked((cur) => {
+      if (cur.includes(s)) return cur.filter((x) => x !== s);
+      if (max > 0 && cur.length >= max) {
+        say(`You can choose at most ${max} subject${max === 1 ? '' : 's'}.`, true);
+        return cur;
+      }
+      return [...cur, s];
+    });
+  };
+
+  const join = async () => {
+    if (!hub) return;
     try {
-      const res = await api.createHub({
-        creatorId: user?.id || 'usr_creator_1',
-        creatorName: user?.fullName || 'Educator',
-        title: newTitle.trim(),
-        description: newDesc.trim(),
-        subject: newSubject.trim(),
-      });
-
-      showToast(`Learning Hub "${res.hub.title}" created.`);
-      setCreateModalOpen(false);
-      setNewTitle('');
-      setNewDesc('');
-      fetchHubs();
-      loadHubDetail(res.hub.id);
+      const res = await api.joinHub(hub.id, picked);
+      say(res.message || 'Done.');
+      await refresh();
     } catch (e: any) {
-      alert(e.message || 'Failed to create hub.');
+      say(e.message || 'Could not join.', true);
     }
   };
 
-  const handleAddMaterial = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedHub || !matTitle.trim() || !matContent.trim()) return;
-
+  const saveSubjects = async () => {
+    if (!hub) return;
     try {
-      await api.addMaterial(selectedHub.id, {
-        creatorId: user?.id || 'usr_creator_1',
-        title: matTitle.trim(),
-        description: matDesc.trim(),
-        type: matType,
-        content: matContent.trim(),
-      });
+      await api.setMySubjects(hub.id, picked);
+      say('Subjects saved.');
+      setEditingSubjects(false);
+      await refresh();
+    } catch (e: any) {
+      say(e.message || 'Could not save.', true);
+    }
+  };
 
-      showToast('Educational material added to hub.');
-      setMaterialModalOpen(false);
+  const leave = async () => {
+    if (!hub?.myMembership) return;
+    if (!window.confirm('Leave this hub?')) return;
+    try {
+      await api.removeHubMember(hub.id, hub.myMembership.id);
+      say('You left the hub.');
+      await refresh();
+    } catch (e: any) {
+      say(e.message || 'Could not leave.', true);
+    }
+  };
+
+  const decide = async (m: HubMember, status: 'active' | 'rejected') => {
+    if (!hub) return;
+    try {
+      await api.setHubMemberStatus(hub.id, m.id, status);
+      say(status === 'active' ? `${m.userName} approved.` : `${m.userName} declined.`);
+      await refresh();
+    } catch (e: any) {
+      say(e.message || 'Could not update.', true);
+    }
+  };
+
+  const remove = async (m: HubMember) => {
+    if (!hub || !window.confirm(`Remove ${m.userName} from this hub?`)) return;
+    try {
+      await api.removeHubMember(hub.id, m.id);
+      say('Member removed.');
+      await refresh();
+    } catch (e: any) {
+      say(e.message || 'Could not remove.', true);
+    }
+  };
+
+  const deleteHub = async () => {
+    if (!hub) return;
+    if (!window.confirm(`Delete "${hub.title}"? Its members and materials will be removed. This cannot be undone.`)) return;
+    try {
+      await api.deleteHub(hub.id);
+      setHub(null);
+      say('Hub deleted.');
+      loadList(search || undefined);
+    } catch (e: any) {
+      say(e.message || 'Could not delete.', true);
+    }
+  };
+
+  const link = hub ? `${window.location.origin}/?hub=${hub.hubCode || hub.id}` : '';
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {}
+  };
+
+  const addMaterial = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!hub || !matTitle.trim() || !matContent.trim()) return;
+    try {
+      await api.addMaterial(hub.id, { creatorId: user?.id || '', title: matTitle.trim(), description: '', type: matType, content: matContent.trim() });
+      setMatOpen(false);
       setMatTitle('');
-      setMatDesc('');
       setMatContent('');
-      loadHubDetail(selectedHub.id);
-    } catch (e: any) {
-      alert(e.message || 'Failed to add material.');
+      say('Material added.');
+      await refresh();
+    } catch (err: any) {
+      say(err.message || 'Could not add material.', true);
     }
   };
 
-  const handleJoinHub = async (hubId: string) => {
-    if (!user) {
-      alert('Please sign in or enter your credentials to join this hub.');
-      return;
-    }
-    try {
-      const res = await api.joinHub(hubId, {
-        userId: user.id,
-        userName: user.fullName,
-        userEmail: user.email,
-      });
-      showToast(res.message || 'Joined Learning Hub successfully!');
-      loadHubDetail(hubId);
-    } catch (e: any) {
-      alert(e.message || 'Failed to join hub.');
-    }
-  };
-
-  const isUserMember = selectedHub?.members.some(
-    (m) => m.userEmail.toLowerCase() === user?.email?.toLowerCase()
-  );
+  const btn = 'px-3 py-2 text-xs font-bold rounded-xl';
+  const status = hub?.myStatus;
 
   return (
-    <div className="space-y-6">
-      {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-xl border border-slate-700 flex items-center gap-2 text-xs">
-          <CheckCircle className="w-4 h-4 text-emerald-400" />
-          <span>{toastMessage}</span>
+    <div className="space-y-4 max-w-3xl mx-auto">
+      {message && (
+        <div
+          className={`fixed top-20 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl text-xs font-semibold shadow-lg ${
+            message.bad ? 'bg-rose-600 text-white' : 'bg-slate-900 text-white'
+          }`}
+        >
+          {message.text}
         </div>
       )}
 
-      {/* Header bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
-        <div>
-          <span className="text-[11px] font-bold text-blue-600 uppercase tracking-wider block mb-1">
-            Knowledge Ecosystem
-          </span>
-          <h1 className="text-xl font-extrabold text-slate-900">Learning Hubs</h1>
-          <p className="text-xs text-slate-500 mt-1">
-            Access curated study notes, syllabus tutorials, linked CBT drills, and track cohort progress
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2.5">
-          {isCreatorOrAdmin && (
-            <button
-              onClick={() => setCreateModalOpen(true)}
-              className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors"
+      {!hub ? (
+        <>
+          <div className="bg-white rounded-2xl border border-slate-200 p-4">
+            <h1 className="text-base font-extrabold text-slate-900">Learning Hubs</h1>
+            <p className="text-xs text-slate-500 mt-1">Find a tutorial hub and join it. Hubs are created from your Profile.</p>
+            <form
+              className="mt-3 flex gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                loadList(search || undefined);
+              }}
             >
-              <Plus className="w-4 h-4" />
-              <span>Create Learning Hub</span>
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Hub layout: Hub Selector + Hub Details */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Hub Selector List */}
-        <div className="lg:col-span-4 space-y-3">
-          <h2 className="text-xs font-bold text-slate-700 uppercase tracking-wider px-1">
-            Available Hubs ({hubs.length})
-          </h2>
-
-          {loading ? (
-            <div className="p-8 text-center text-xs text-slate-500 bg-white rounded-xl border border-slate-200">
-              Loading learning hubs...
-            </div>
-          ) : hubs.length === 0 ? (
-            <div className="p-8 text-center bg-white rounded-xl border border-slate-200">
-              <BookOpen className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-              <p className="text-xs font-medium text-slate-600">No Learning Hubs created yet.</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {hubs.map((hub) => {
-                const isSelected = selectedHub?.id === hub.id;
-                return (
-                  <button
-                    key={hub.id}
-                    onClick={() => loadHubDetail(hub.id)}
-                    className={`w-full text-left p-4 rounded-xl border transition-all ${
-                      isSelected
-                        ? 'bg-slate-900 text-white border-slate-900 shadow-sm'
-                        : 'bg-white text-slate-800 border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <span
-                        className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
-                          isSelected ? 'bg-blue-900/60 text-blue-300' : 'bg-blue-50 text-blue-700'
-                        }`}
-                      >
-                        {hub.subject}
-                      </span>
-                      <ChevronRight
-                        className={`w-4 h-4 ${isSelected ? 'text-blue-400' : 'text-slate-400'}`}
-                      />
-                    </div>
-                    <h3 className="font-bold text-sm mt-2 leading-snug">{hub.title}</h3>
-                    <p
-                      className={`text-xs mt-1 line-clamp-2 ${
-                        isSelected ? 'text-slate-300' : 'text-slate-500'
-                      }`}
-                    >
-                      {hub.description}
-                    </p>
-
-                    <div
-                      className={`flex items-center gap-3 mt-3 pt-2 text-[11px] border-t ${
-                        isSelected ? 'border-slate-800 text-slate-400' : 'border-slate-100 text-slate-500'
-                      }`}
-                    >
-                      <span className="flex items-center gap-1">
-                        <Users className="w-3.5 h-3.5" />
-                        <span>{hub.memberCount || 0} Members</span>
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <FileText className="w-3.5 h-3.5" />
-                        <span>{hub.materialCount || 0} Materials</span>
-                      </span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Selected Hub Main Content */}
-        <div className="lg:col-span-8 space-y-6">
-          {selectedHub ? (
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 space-y-6">
-              {/* Hub Title Banner */}
-              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 pb-6 border-b border-slate-100">
-                <div>
-                  <span className="text-xs font-bold text-blue-600 uppercase tracking-wider block mb-1">
-                    {selectedHub.subject}
-                  </span>
-                  <h2 className="text-xl font-extrabold text-slate-900 leading-snug">
-                    {selectedHub.title}
-                  </h2>
-                  <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
-                    {selectedHub.description}
-                  </p>
-                  <p className="text-[11px] text-slate-400 mt-2">
-                    Managed by {selectedHub.creatorName} · Created{' '}
-                    {new Date(selectedHub.createdAt).toLocaleDateString()}
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  {!isUserMember ? (
-                    <button
-                      onClick={() => handleJoinHub(selectedHub.id)}
-                      className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 rounded-lg shadow-xs transition-colors"
-                    >
-                      Join Hub
-                    </button>
-                  ) : (
-                    <span className="px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center gap-1">
-                      <CheckCircle className="w-3.5 h-3.5" />
-                      <span>Enrolled Member</span>
-                    </span>
-                  )}
-
-                  {isCreatorOrAdmin && (
-                    <button
-                      onClick={() => setMaterialModalOpen(true)}
-                      className="px-3.5 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors flex items-center gap-1.5"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Add Material</span>
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Materials Section */}
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-blue-600" />
-                    <span>Learning Materials & Study Guides ({selectedHub.materials?.length || 0})</span>
-                  </h3>
-                </div>
-
-                {selectedHub.materials?.length === 0 ? (
-                  <div className="p-8 text-center bg-slate-50 rounded-xl border border-slate-200">
-                    <p className="text-xs text-slate-500">
-                      No materials posted yet. The hub creator will publish study notes and syllabus breakdowns here.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {selectedHub.materials.map((mat) => (
-                      <div
-                        key={mat.id}
-                        className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 transition-colors space-y-2"
-                      >
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="font-bold text-slate-900">{mat.title}</span>
-                          <span className="text-[10px] uppercase font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
-                            {mat.type}
-                          </span>
-                        </div>
-                        {mat.description && (
-                          <p className="text-xs text-slate-600">{mat.description}</p>
-                        )}
-                        <div className="p-3 bg-white rounded-lg border border-slate-200 text-xs text-slate-700 font-serif leading-relaxed whitespace-pre-wrap">
-                          {mat.content}
-                        </div>
-                        <span className="text-[10px] text-slate-400 block">
-                          Posted on {new Date(mat.createdAt).toLocaleDateString()}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Creator Student Performance Analytics (Requirement 17) */}
-              {isCreatorOrAdmin && performanceData.length > 0 && (
-                <div className="space-y-3 pt-6 border-t border-slate-100">
-                  <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
-                    <GraduationCap className="w-4 h-4 text-blue-600" />
-                    <span>Student Member Performance Analytics</span>
-                  </h3>
-
-                  <div className="overflow-x-auto border border-slate-200 rounded-xl">
-                    <table className="w-full text-left text-xs">
-                      <thead className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600 uppercase">
-                        <tr>
-                          <th className="py-2.5 px-4">Student</th>
-                          <th className="py-2.5 px-3">Email</th>
-                          <th className="py-2.5 px-3 text-center">Quizzes Taken</th>
-                          <th className="py-2.5 px-3 text-center">Avg Score</th>
-                          <th className="py-2.5 px-4">Enrolled Date</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {performanceData.map((p) => (
-                          <tr key={p.memberId} className="hover:bg-slate-50/60">
-                            <td className="py-2.5 px-4 font-bold text-slate-800">{p.name}</td>
-                            <td className="py-2.5 px-3 text-slate-500 font-mono text-[11px]">{p.email}</td>
-                            <td className="py-2.5 px-3 text-center font-bold text-slate-700 tabular-nums">
-                              {p.quizzesTaken}
-                            </td>
-                            <td className="py-2.5 px-3 text-center font-bold text-blue-700 tabular-nums">
-                              {p.averageScore}
-                            </td>
-                            <td className="py-2.5 px-4 text-slate-500 text-[11px]">
-                              {new Date(p.joinedAt).toLocaleDateString()}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-xs text-slate-500">
-              Select a learning hub from the left to view materials and syllabus modules.
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Create Hub Modal */}
-      {createModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
-          <form
-            onSubmit={handleCreateHub}
-            className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 p-6 space-y-4"
-          >
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-              <h3 className="text-base font-bold text-slate-900">Create Learning Hub</h3>
-              <button
-                type="button"
-                onClick={() => setCreateModalOpen(false)}
-                className="text-slate-400 hover:text-slate-700"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Hub Title <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="text"
-                required
-                placeholder="e.g. UTME Science & Medical Drill Hub"
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Subject Focus
-              </label>
-              <input
-                type="text"
-                value={newSubject}
-                onChange={(e) => setNewSubject(e.target.value)}
-                placeholder="e.g. Life Sciences, Chemistry, Mathematics"
-                className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Description
-              </label>
-              <textarea
-                rows={3}
-                placeholder="Detail what students will master inside this hub..."
-                value={newDesc}
-                onChange={(e) => setNewDesc(e.target.value)}
-                className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setCreateModalOpen(false)}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 rounded-lg shadow-xs"
-              >
-                Create Hub
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* Add Material Modal */}
-      {materialModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
-          <form
-            onSubmit={handleAddMaterial}
-            className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 p-6 space-y-4"
-          >
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-              <h3 className="text-base font-bold text-slate-900">Add Learning Material</h3>
-              <button
-                type="button"
-                onClick={() => setMaterialModalOpen(false)}
-                className="text-slate-400 hover:text-slate-700"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Title <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="text"
-                required
-                placeholder="e.g. Electron Transport Chain Synthesis"
-                value={matTitle}
-                onChange={(e) => setMatTitle(e.target.value)}
-                className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Type
-                </label>
-                <select
-                  value={matType}
-                  onChange={(e) => setMatType(e.target.value as any)}
-                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg"
-                >
-                  <option value="note">Study Note</option>
-                  <option value="tutorial">Step-by-Step Tutorial</option>
-                  <option value="guide">Revision Guide</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Short Summary
-                </label>
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
-                  type="text"
-                  placeholder="Key takeaway"
-                  value={matDesc}
-                  onChange={(e) => setMatDesc(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search by name, subject, JAMB..."
+                  className="w-full pl-9 pr-3 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600"
                 />
               </div>
-            </div>
+              <button type="submit" className={`${btn} bg-blue-600 text-white`}>
+                Search
+              </button>
+            </form>
+          </div>
 
+          {loading ? (
+            <p className="text-xs text-slate-500 text-center py-8">Loading hubs...</p>
+          ) : hubs.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-xs text-slate-500">
+              {search ? 'No hubs match your search.' : 'No hubs yet.'}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {hubs.map((h) => (
+                <button
+                  key={h.id}
+                  onClick={() => openHub(h.id)}
+                  className="w-full text-left bg-white rounded-2xl border border-slate-200 hover:border-blue-300 p-4 space-y-1.5"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <h3 className="text-sm font-bold text-slate-900">{h.title}</h3>
+                    {h.myStatus && (
+                      <span className="shrink-0 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">
+                        {h.myStatus === 'owner' ? 'Yours' : h.myStatus === 'active' ? 'Joined' : h.myStatus}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    {[h.institution, h.examBody].filter(Boolean).join(' · ') || 'Learning hub'} · by {h.creatorName}
+                  </p>
+                  {h.subjects && h.subjects.length > 0 && (
+                    <p className="text-[11px] text-slate-600">{h.subjects.join(', ')}</p>
+                  )}
+                  <p className="text-[11px] text-slate-400">
+                    {h.memberCount ?? 0} members · {h.accessType === 'paid' ? 'Paid' : 'Free'} ·{' '}
+                    {(h.joinMode ?? 'open') === 'approval' ? 'Approval needed' : 'Open'}
+                  </p>
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="space-y-4">
+          <button onClick={() => setHub(null)} className="text-xs font-semibold text-blue-600 hover:underline">
+            ← All hubs
+          </button>
+
+          <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Content / Notes <span className="text-rose-500">*</span>
-              </label>
-              <textarea
-                rows={6}
-                required
-                placeholder="Enter complete educational notes, formulas, rules, or guidelines..."
-                value={matContent}
-                onChange={(e) => setMatContent(e.target.value)}
-                className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg font-serif"
-              />
+              <h2 className="text-base font-extrabold text-slate-900">{hub.title}</h2>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                {[hub.institution, hub.examBody].filter(Boolean).join(' · ')}
+                {(hub.institution || hub.examBody) && ' · '}by {hub.creatorName}
+              </p>
             </div>
+            {hub.description && <p className="text-xs text-slate-700 leading-relaxed">{hub.description}</p>}
+            {hub.objectives && (
+              <div>
+                <p className="text-[11px] font-bold text-slate-700">Objectives</p>
+                <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-line">{hub.objectives}</p>
+              </div>
+            )}
+            <div className="text-[11px] text-slate-500 space-y-0.5">
+              <p>
+                <strong className="text-slate-700">Subjects:</strong> {(hub.subjects || []).join(', ') || 'Not listed'}
+                {max > 0 && ` (choose up to ${max})`}
+              </p>
+              <p>
+                <strong className="text-slate-700">Access:</strong>{' '}
+                {hub.accessType === 'paid'
+                  ? `Paid${hub.membershipFee ? `, ${hub.membershipFee}` : ''}. The creator confirms your payment.`
+                  : 'Free'}
+                {' · '}
+                {(hub.joinMode ?? 'open') === 'approval' ? 'The creator approves each student' : 'Open joining'}
+              </p>
+              {hub.accessType === 'paid' && hub.paymentInstructions && (
+                <p>
+                  <strong className="text-slate-700">How to pay:</strong> {hub.paymentInstructions}
+                </p>
+              )}
+              <p>{hub.memberCount ?? 0} members</p>
+            </div>
+          </div>
 
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setMaterialModalOpen(false)}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg"
-              >
+          {/* Student: join / status */}
+          {!manage && (
+            <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+              {!user ? (
+                <p className="text-xs text-slate-600">Log in to join this hub.</p>
+              ) : status === 'active' && !editingSubjects ? (
+                <>
+                  <p className="text-xs font-bold text-emerald-700">You are a member of this hub.</p>
+                  <p className="text-xs text-slate-600">
+                    <strong>Your subjects:</strong> {(hub.myMembership?.selectedSubjects || []).join(', ') || 'None chosen'}
+                  </p>
+                  <div className="flex gap-2">
+                    <button onClick={() => setEditingSubjects(true)} className={`${btn} bg-slate-100 text-slate-700`}>
+                      Change subjects
+                    </button>
+                    <button onClick={leave} className={`${btn} bg-slate-100 text-rose-600`}>
+                      Leave hub
+                    </button>
+                  </div>
+                </>
+              ) : status === 'pending' ? (
+                <p className="text-xs text-amber-700 font-semibold flex items-center gap-1.5">
+                  <Clock className="w-4 h-4" />
+                  {hub.accessType === 'paid'
+                    ? 'Waiting for the creator to confirm your payment.'
+                    : 'Your request is waiting for the hub creator.'}
+                </p>
+              ) : (
+                <>
+                  <p className="text-xs font-bold text-slate-800">
+                    {status === 'rejected' ? 'Your last request was declined. You can ask again.' : 'Choose your subjects'}
+                  </p>
+                  <div className="space-y-1.5">
+                    {(hub.subjects || []).map((s) => (
+                      <label key={s} className="flex items-center gap-2 text-xs text-slate-700">
+                        <input type="checkbox" checked={picked.includes(s)} onChange={() => toggleSubject(s)} className="w-4 h-4" />
+                        <span>{s}</span>
+                      </label>
+                    ))}
+                  </div>
+                  {max > 0 && (
+                    <p className="text-[11px] text-slate-500">
+                      {picked.length} of {max} chosen
+                    </p>
+                  )}
+                  {status === 'active' && editingSubjects ? (
+                    <div className="flex gap-2">
+                      <button onClick={saveSubjects} className={`${btn} bg-blue-600 text-white`}>
+                        Save subjects
+                      </button>
+                      <button onClick={() => setEditingSubjects(false)} className={`${btn} bg-slate-100 text-slate-700`}>
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button onClick={join} disabled={(hub.subjects || []).length > 0 && picked.length === 0} className={`${btn} bg-blue-600 text-white disabled:opacity-50`}>
+                      {needsApproval ? 'Request to join' : 'Join hub'}
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Creator tools */}
+          {manage && (
+            <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-4">
+              <div className="flex flex-wrap gap-2">
+                <button onClick={copyLink} className={`${btn} bg-blue-50 text-blue-700 flex items-center gap-1.5`}>
+                  {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                  {copied ? 'Link copied' : 'Copy hub link'}
+                </button>
+                <button onClick={() => setFormOpen(true)} className={`${btn} bg-slate-100 text-slate-700`}>
+                  Edit hub
+                </button>
+                <button onClick={() => setMatOpen(true)} className={`${btn} bg-slate-100 text-slate-700 flex items-center gap-1`}>
+                  <Plus className="w-4 h-4" /> Add material
+                </button>
+                <button onClick={deleteHub} className={`${btn} bg-slate-100 text-rose-600`}>
+                  Delete hub
+                </button>
+              </div>
+              <p className="text-[11px] text-slate-500 break-all">{link}</p>
+
+              <div>
+                <p className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                  <Users className="w-4 h-4 text-blue-600" /> Requests waiting ({hub.members.filter((m) => m.status === 'pending').length})
+                </p>
+                <div className="mt-2 space-y-2">
+                  {hub.members.filter((m) => m.status === 'pending').length === 0 && (
+                    <p className="text-[11px] text-slate-500">No requests waiting.</p>
+                  )}
+                  {hub.members
+                    .filter((m) => m.status === 'pending')
+                    .map((m) => (
+                      <div key={m.id} className="p-3 rounded-xl border border-slate-200 text-xs space-y-1.5">
+                        <p className="font-bold text-slate-900">{m.userName}</p>
+                        <p className="text-slate-500">{m.userEmail}</p>
+                        <p className="text-slate-600">{(m.selectedSubjects || []).join(', ')}</p>
+                        {hub.accessType === 'paid' && (
+                          <p className="text-[11px] text-amber-700">Approve only after you have received their payment.</p>
+                        )}
+                        <div className="flex gap-2">
+                          <button onClick={() => decide(m, 'active')} className={`${btn} bg-emerald-600 text-white`}>
+                            Approve
+                          </button>
+                          <button onClick={() => decide(m, 'rejected')} className={`${btn} bg-slate-100 text-rose-600`}>
+                            Decline
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                  <GraduationCap className="w-4 h-4 text-blue-600" /> Members ({hub.members.filter((m) => m.status !== 'pending' && m.status !== 'rejected').length})
+                </p>
+                <div className="mt-2 space-y-2">
+                  {hub.members
+                    .filter((m) => m.status !== 'pending' && m.status !== 'rejected')
+                    .map((m) => {
+                      const p = performance.find((x) => x.memberId === m.id);
+                      return (
+                        <div key={m.id} className="p-3 rounded-xl border border-slate-200 text-xs flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="font-bold text-slate-900">{m.userName}</p>
+                            <p className="text-slate-500 truncate">{m.userEmail}</p>
+                            <p className="text-slate-600">{(m.selectedSubjects || []).join(', ')}</p>
+                            {p && (
+                              <p className="text-[11px] text-slate-500 mt-0.5">
+                                {p.quizzesTaken} quizzes · average {p.averageScore}
+                              </p>
+                            )}
+                          </div>
+                          <button onClick={() => remove(m)} className="shrink-0 p-1.5 text-slate-400 hover:text-rose-600" title="Remove">
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Materials */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+            <p className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+              <FileText className="w-4 h-4 text-blue-600" /> Learning materials ({hub.materialCount ?? hub.materials.length})
+            </p>
+            {hub.materials.length === 0 ? (
+              <p className="text-[11px] text-slate-500">
+                {manage || status === 'active'
+                  ? 'No materials posted yet.'
+                  : 'Join this hub to read its materials.'}
+              </p>
+            ) : (
+              hub.materials.map((mat) => (
+                <div key={mat.id} className="p-3 rounded-xl border border-slate-200 bg-slate-50/50 space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-bold text-slate-900">{mat.title}</span>
+                    <span className="text-[10px] uppercase font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded">{mat.type}</span>
+                  </div>
+                  <p className="text-xs text-slate-700 whitespace-pre-line break-words">{mat.content}</p>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {formOpen && hub && (
+        <HubFormModal
+          hub={hub}
+          onClose={() => setFormOpen(false)}
+          onSaved={() => {
+            setFormOpen(false);
+            say('Hub updated.');
+            refresh();
+          }}
+        />
+      )}
+
+      {matOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-end sm:items-center justify-center">
+          <form onSubmit={addMaterial} className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl p-4 space-y-3">
+            <h3 className="text-sm font-bold text-slate-900">Add learning material</h3>
+            <input
+              value={matTitle}
+              onChange={(e) => setMatTitle(e.target.value)}
+              placeholder="Title"
+              required
+              className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl"
+            />
+            <select value={matType} onChange={(e) => setMatType(e.target.value as any)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl">
+              <option value="note">Note</option>
+              <option value="tutorial">Tutorial</option>
+              <option value="guide">Guide</option>
+            </select>
+            <textarea
+              value={matContent}
+              onChange={(e) => setMatContent(e.target.value)}
+              placeholder="Text, or a link to a video or document"
+              rows={4}
+              required
+              className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl"
+            />
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setMatOpen(false)} className={`${btn} flex-1 bg-slate-100 text-slate-700`}>
                 Cancel
               </button>
-              <button
-                type="submit"
-                className="px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 rounded-lg shadow-xs"
-              >
-                Publish Material
+              <button type="submit" className={`${btn} flex-1 bg-blue-600 text-white`}>
+                Add
               </button>
             </div>
           </form>

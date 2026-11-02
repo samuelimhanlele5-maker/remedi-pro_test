@@ -3,6 +3,8 @@ import { useAuth } from '../context/AuthContext.tsx';
 import { api } from '../services/api.ts';
 import { LearningHub, HubMaterial, HubMember, Quiz } from '../types.ts';
 import { HubFormModal } from '../components/HubFormModal.tsx';
+import { TopicBuilder } from '../components/TopicBuilder.tsx';
+import { TopicReader } from '../components/TopicReader.tsx';
 import { BookOpen, Users, FileText, GraduationCap, Search, Copy, Check, X, Plus, Clock } from 'lucide-react';
 
 interface LearningHubViewProps {
@@ -30,6 +32,7 @@ export const LearningHubView: React.FC<LearningHubViewProps> = ({ focusHub, onFo
   const [matTitle, setMatTitle] = useState('');
   const [matType, setMatType] = useState<'note' | 'tutorial' | 'guide'>('note');
   const [matContent, setMatContent] = useState('');
+  const [mode, setMode] = useState<'none' | 'builder' | 'reader'>('none');
 
   const say = (text: string, bad = false) => {
     setMessage({ text, bad });
@@ -195,6 +198,14 @@ export const LearningHubView: React.FC<LearningHubViewProps> = ({ focusHub, onFo
   const btn = 'px-3 py-2 text-xs font-bold rounded-xl';
   const status = hub?.myStatus;
 
+  // Topics: the creator's builder and the student's reader take over the page
+  if (hub && mode === 'builder') {
+    return <TopicBuilder hub={hub} onClose={() => setMode('none')} />;
+  }
+  if (hub && mode === 'reader') {
+    return <TopicReader hub={hub} onBack={() => setMode('none')} />;
+  }
+
   return (
     <div className="space-y-4 max-w-3xl mx-auto">
       {message && (
@@ -325,6 +336,9 @@ export const LearningHubView: React.FC<LearningHubViewProps> = ({ focusHub, onFo
                   <p className="text-xs text-slate-600">
                     <strong>Your subjects:</strong> {(hub.myMembership?.selectedSubjects || []).join(', ') || 'None chosen'}
                   </p>
+                  <button onClick={() => setMode('reader')} className={`${btn} w-full bg-emerald-600 text-white`}>
+                    Study topics
+                  </button>
                   <div className="flex gap-2">
                     <button onClick={() => setEditingSubjects(true)} className={`${btn} bg-slate-100 text-slate-700`}>
                       Change subjects
@@ -385,6 +399,9 @@ export const LearningHubView: React.FC<LearningHubViewProps> = ({ focusHub, onFo
                 <button onClick={copyLink} className={`${btn} bg-blue-50 text-blue-700 flex items-center gap-1.5`}>
                   {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                   {copied ? 'Link copied' : 'Copy hub link'}
+                </button>
+                <button onClick={() => setMode('builder')} className={`${btn} bg-emerald-600 text-white`}>
+                  Manage topics
                 </button>
                 <button onClick={() => setFormOpen(true)} className={`${btn} bg-slate-100 text-slate-700`}>
                   Edit hub

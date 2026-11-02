@@ -52,6 +52,58 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   return data as T;
 }
 
+
+// ---- Learning hub topics (blocks, quiz, progress) ----
+export interface TopicBlock {
+  id?: string;
+  type: 'text' | 'image' | 'audio' | 'video';
+  text?: string;
+  url?: string;
+  caption?: string;
+}
+export interface TopicQuestionFull {
+  id?: string;
+  question: string;
+  options: string[];
+  answerIndex: number;
+  explanation?: string;
+}
+export interface TopicMyProgress {
+  contentDone: boolean;
+  bestPct: number | null;
+  lastPct?: number | null;
+  attempts: number;
+  completed: boolean;
+}
+export interface TopicSummary {
+  id: string;
+  subject: string;
+  title: string;
+  order: number;
+  status: 'draft' | 'published';
+  blockCount: number;
+  quizCount: number;
+  myProgress?: TopicMyProgress;
+}
+export interface TopicFull {
+  id: string;
+  subject: string;
+  title: string;
+  status?: 'draft' | 'published';
+  blocks: TopicBlock[];
+  quiz: { id: string; question: string; options: string[]; answerIndex?: number; explanation?: string }[];
+  myProgress?: TopicMyProgress;
+}
+export interface TopicQuizResult {
+  score: number;
+  total: number;
+  pct: number;
+  passed: boolean;
+  completed: boolean;
+  bestPct: number;
+  results: { questionId: string; chosenIndex: number | null; correct: boolean; correctIndex: number; explanation: string | null }[];
+}
+
 export const api = {
   // Auth
   async register(data: { email: string; password: string; fullName: string; role?: string }) {
@@ -320,6 +372,50 @@ export const api = {
     return request<{ ok: boolean; subjects: string[] }>(`/hubs/${hubId}/my-subjects`, {
       method: 'PUT',
       body: JSON.stringify({ subjects }),
+    });
+  },
+
+  async getTopics(hubId: string) {
+    return request<{ topics: TopicSummary[] }>(`/hubs/${hubId}/topics`);
+  },
+
+  async createTopic(hubId: string, subject: string, title: string) {
+    return request<{ topic: TopicFull }>(`/hubs/${hubId}/topics`, {
+      method: 'POST',
+      body: JSON.stringify({ subject, title }),
+    });
+  },
+
+  async getTopic(hubId: string, topicId: string) {
+    return request<{ topic: TopicFull }>(`/hubs/${hubId}/topics/${topicId}`);
+  },
+
+  async updateTopic(hubId: string, topicId: string, data: { title?: string; blocks?: TopicBlock[]; quiz?: TopicQuestionFull[] }) {
+    return request<{ topic: TopicFull }>(`/hubs/${hubId}/topics/${topicId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async publishTopic(hubId: string, topicId: string, published: boolean) {
+    return request<{ ok: boolean; status: string }>(`/hubs/${hubId}/topics/${topicId}/publish`, {
+      method: 'POST',
+      body: JSON.stringify({ published }),
+    });
+  },
+
+  async deleteTopic(hubId: string, topicId: string) {
+    return request<{ ok: boolean }>(`/hubs/${hubId}/topics/${topicId}`, { method: 'DELETE' });
+  },
+
+  async completeTopic(hubId: string, topicId: string) {
+    return request<{ ok: boolean }>(`/hubs/${hubId}/topics/${topicId}/complete`, { method: 'POST' });
+  },
+
+  async submitTopicQuiz(hubId: string, topicId: string, answers: Record<string, number>) {
+    return request<TopicQuizResult>(`/hubs/${hubId}/topics/${topicId}/quiz/submit`, {
+      method: 'POST',
+      body: JSON.stringify({ answers }),
     });
   },
 

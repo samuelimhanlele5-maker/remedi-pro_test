@@ -19,6 +19,10 @@ import {
   SystemSettings,
   generateCreatorCode,
   Registration,
+  HubTopic,
+  TopicBlock,
+  TopicQuestion,
+  TopicProgress,
 } from './db.js';
 
 export const apiRouter = Router();
@@ -1439,6 +1443,8 @@ apiRouter.delete('/hubs/:id', (req: Request, res: Response) => {
     state.learningHubs = state.learningHubs.filter((h) => h.id !== hub.id);
     state.hubMembers = state.hubMembers.filter((m) => m.hubId !== hub.id);
     state.hubMaterials = state.hubMaterials.filter((m) => m.hubId !== hub.id);
+    state.hubTopics = state.hubTopics.filter((t) => t.hubId !== hub.id);
+    state.topicProgress = state.topicProgress.filter((p) => p.hubId !== hub.id);
     state.auditLogs.unshift({
       id: generateId('log'),
       action: 'HUB_DELETE',
@@ -2455,4 +2461,369 @@ apiRouter.post('/admin/users/:id/reset-password', requireAdmin, (req: Request, r
     });
   });
   return res.json({ tempPassword: temp, email: target.email });
+});
+
+
+// ==========================================
+// HUB TOPICS: content blocks, end-of-topic quiz, progress (Phase 4)
+// ==========================================
+
+const PASS_MARK = 50; // a topic counts as completed at this quiz score or higher
+const STRONG_MARK = 70;
+const WEAK_MARK = 50;
+const MIN_QUIZZES_FOR_VERDICT = 2;
+
+function sameName(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+function hubMember(db: any, hub: LearningHub, user: User | null): HubMember | null {
+  if (!user) return null;
+  return (
+    db.hubMembers.find((m: HubMember) => m.hubId === hub.id && m.userEmail.toLowerCase() === user.email.toLowerCase()) || null
+  );
+}
+
+// Subjects a student may see: the ones they chose (or all, for hubs with no subject list)
+function visibleSubjects(hub: LearningHub, member: HubMember | null): string[] {
+  const offered = hub.subjects || [];
+  const chosen = member?.selectedSubjects || [];
+  return chosen.length > 0 ? chosen : offered;
+}
+
+function cleanUrl(v: any): string | null {
+  const u = String(v || '').trim();
+  if (!u || u.length > 1000) return null;
+  return /^https?:\/\/[^\s]+$/i.test(u) ? u : null;
+}
+
+function cleanBlocks(input: any): { error?: string; blocks?: TopicBlock[] } {
+  if (!Array.isArray(input)) return { error: 'Content must be a list of blocks.' };
+  if (input.length > 60) return { error: 'A topic can have at most 60 content blocks.' };
+  const blocks: TopicBlock[] = [];
+  for (const raw of input) {
+    const type = raw?.type;
+    const id = typeof raw?.id === 'string' && /^blk_[A-Za-z0-9_]+$/.test(raw.id) ? raw.id : generateId('blk');
+    if (type === 'text') {
+      const text = String(raw.text || '').trim();
+      if (!text) return { error: 'A write-up block cannot be empty.' };
+      if (text.length > 20000) return { error: 'A write-up block is too long (20,000 characters at most).' };
+      blocks.push({ id, type, text });
+    } else if (type === 'image' || type === 'audio' || type === 'video') {
+      const url = cleanUrl(raw.url);
+      if (!url) return { error: `The ${type} link must start with http:// or https://.` };
+      blocks.push({ id, type, url, caption: String(raw.caption || '').trim().slice(0, 300) || undefined });
+    } else {
+      return { error: 'Unknown content block type.' };
+    }
+  }
+  return { blocks };
+}
+
+function cleanQuiz(input: any): { error?: string; quiz?: TopicQuestion[] } {
+  if (!Array.isArray(input)) return { error: 'Quiz must be a list of questions.' };
+  if (input.length > 50) return { error: 'A topic quiz can have at most 50 questions.' };
+  const quiz: TopicQuestion[] = [];
+  for (let i = 0; i < input.length; i++) {
+    const q = input[i];
+    const question = String(q?.question || '').trim();
+    if (!question) return { error: `Question ${i + 1} has no text.` };
+    if (question.length > 1000) return { error: `Question ${i + 1} is too long.` };
+    const options = Array.isArray(q.options) ? q.options.map((o: any) => String(o || '').trim()).filter(Boolean) : [];
+    if (options.length < 2 || options.length > 6) return { error: `Question ${i + 1} needs between 2 and 6 options.` };
+    if (options.some((o: string) => o.length > 300)) return { error: `An option in question ${i + 1} is too long.` };
+    const answerIndex = Number(q.answerIndex);
+    if (!Number.isInteger(answerIndex) || answerIndex < 0 || answerIndex >= options.length) {
+      return { error: `Question ${i + 1} needs a correct answer.` };
+    }
+    const id = typeof q.id === 'string' && /^tq_[A-Za-z0-9_]+$/.test(q.id) ? q.id : generateId('tq');
+    quiz.push({ id, question, options, answerIndex, explanation: String(q.explanation || '').trim().slice(0, 1500) || undefined });
+  }
+  return { quiz };
+}
+
+function studentQuiz(topic: HubTopic) {
+  return topic.quiz.map(({ id, question, options }) => ({ id, question, options }));
+}
+
+function topicProgressFor(db: any, hubId: string, topicId: string, userId: string): TopicProgress | undefined {
+  return db.topicProgress.find((p: TopicProgress) => p.hubId === hubId && p.topicId === topicId && p.userId === userId);
+}
+
+function isTopicCompleted(topic: HubTopic, p: TopicProgress | undefined): boolean {
+  if (!p || !p.contentDone) return false;
+  return topic.quiz.length === 0 || (p.bestPct ?? -1) >= PASS_MARK;
+}
+
+// Load the hub and who is asking
+function topicContext(req: Request, res: Response) {
+  const db = dbManager.getData();
+  const hub = findHubByKey(db, req.params.id);
+  if (!hub) {
+    res.status(404).json({ error: 'Hub not found.' });
+    return null;
+  }
+  const user = getAuthUser(req);
+  const manage = canManageHub(req, hub);
+  const member = hubMember(db, hub, user);
+  const isActive = !!member && memberStatus(member) === 'active';
+  return { db, hub, user, manage, member, isActive };
+}
+
+// List topics
+apiRouter.get('/hubs/:id/topics', (req: Request, res: Response) => {
+  const c = topicContext(req, res);
+  if (!c) return;
+  if (!c.manage && !c.isActive) return res.status(403).json({ error: 'Join this hub to see its topics.' });
+  const allowed = c.manage ? null : visibleSubjects(c.hub, c.member);
+  const topics = c.db.hubTopics
+    .filter((t) => t.hubId === c.hub.id)
+    .filter((t) => c.manage || t.status === 'published')
+    .filter((t) => !allowed || allowed.some((s) => sameName(s, t.subject)))
+    .sort((a, b) => a.subject.localeCompare(b.subject) || a.order - b.order)
+    .map((t) => {
+      const p = c.user ? topicProgressFor(c.db, c.hub.id, t.id, c.user.id) : undefined;
+      return {
+        id: t.id,
+        subject: t.subject,
+        title: t.title,
+        order: t.order,
+        status: t.status,
+        blockCount: t.blocks.length,
+        quizCount: t.quiz.length,
+        myProgress: c.manage ? undefined : { contentDone: !!p?.contentDone, bestPct: p?.bestPct ?? null, attempts: p?.attempts ?? 0, completed: isTopicCompleted(t, p) },
+      };
+    });
+  return res.json({ topics });
+});
+
+// Create a topic (draft)
+apiRouter.post('/hubs/:id/topics', (req: Request, res: Response) => {
+  const c = topicContext(req, res);
+  if (!c) return;
+  if (!c.manage) return res.status(403).json({ error: 'Only the hub owner or admin can add topics.' });
+  const subject = (c.hub.subjects || []).find((s) => sameName(s, String(req.body?.subject || '')));
+  if (!subject) return res.status(400).json({ error: 'Choose one of the hub subjects.' });
+  const title = String(req.body?.title || '').trim();
+  if (!title) return res.status(400).json({ error: 'Topic title is required.' });
+  if (title.length > 150) return res.status(400).json({ error: 'Topic title is too long.' });
+  const order = Math.max(0, ...c.db.hubTopics.filter((t) => t.hubId === c.hub.id && t.subject === subject).map((t) => t.order)) + 1;
+  const now = new Date().toISOString();
+  const topic: HubTopic = { id: generateId('topic'), hubId: c.hub.id, subject, title, order, status: 'draft', blocks: [], quiz: [], createdAt: now, updatedAt: now };
+  dbManager.update((state) => {
+    state.hubTopics.push(topic);
+  });
+  return res.status(201).json({ topic });
+});
+
+// Read one topic
+apiRouter.get('/hubs/:id/topics/:topicId', (req: Request, res: Response) => {
+  const c = topicContext(req, res);
+  if (!c) return;
+  const topic = c.db.hubTopics.find((t) => t.id === req.params.topicId && t.hubId === c.hub.id);
+  if (!topic) return res.status(404).json({ error: 'Topic not found.' });
+  if (c.manage) return res.json({ topic });
+  if (!c.isActive) return res.status(403).json({ error: 'Join this hub to read its topics.' });
+  if (topic.status !== 'published') return res.status(404).json({ error: 'Topic not found.' });
+  if (!visibleSubjects(c.hub, c.member).some((s) => sameName(s, topic.subject))) {
+    return res.status(403).json({ error: 'This topic is in a subject you did not choose.' });
+  }
+  const p = topicProgressFor(c.db, c.hub.id, topic.id, c.user!.id);
+  return res.json({
+    topic: {
+      id: topic.id,
+      subject: topic.subject,
+      title: topic.title,
+      blocks: topic.blocks,
+      quiz: studentQuiz(topic),
+      myProgress: { contentDone: !!p?.contentDone, bestPct: p?.bestPct ?? null, lastPct: p?.lastPct ?? null, attempts: p?.attempts ?? 0, completed: isTopicCompleted(topic, p) },
+    },
+  });
+});
+
+// Edit a topic: title, subject, blocks, quiz
+apiRouter.put('/hubs/:id/topics/:topicId', (req: Request, res: Response) => {
+  const c = topicContext(req, res);
+  if (!c) return;
+  if (!c.manage) return res.status(403).json({ error: 'Only the hub owner or admin can edit topics.' });
+  const topic = c.db.hubTopics.find((t) => t.id === req.params.topicId && t.hubId === c.hub.id);
+  if (!topic) return res.status(404).json({ error: 'Topic not found.' });
+  const patch: Partial<HubTopic> = {};
+  if (req.body.title !== undefined) {
+    const title = String(req.body.title || '').trim();
+    if (!title || title.length > 150) return res.status(400).json({ error: 'Topic title is required (150 characters at most).' });
+    patch.title = title;
+  }
+  if (req.body.subject !== undefined) {
+    const subject = (c.hub.subjects || []).find((s) => sameName(s, String(req.body.subject)));
+    if (!subject) return res.status(400).json({ error: 'Choose one of the hub subjects.' });
+    patch.subject = subject;
+  }
+  if (req.body.blocks !== undefined) {
+    const b = cleanBlocks(req.body.blocks);
+    if (b.error) return res.status(400).json({ error: b.error });
+    patch.blocks = b.blocks;
+  }
+  if (req.body.quiz !== undefined) {
+    const q = cleanQuiz(req.body.quiz);
+    if (q.error) return res.status(400).json({ error: q.error });
+    patch.quiz = q.quiz;
+  }
+  dbManager.update((state) => {
+    const t = state.hubTopics.find((x) => x.id === topic.id);
+    if (t) {
+      Object.assign(t, patch, { updatedAt: new Date().toISOString() });
+      // a published topic must keep some content
+      if (t.status === 'published' && t.blocks.length === 0) t.status = 'draft';
+    }
+  });
+  const updated = dbManager.getData().hubTopics.find((t) => t.id === topic.id);
+  return res.json({ topic: updated });
+});
+
+// Publish or unpublish
+apiRouter.post('/hubs/:id/topics/:topicId/publish', (req: Request, res: Response) => {
+  const c = topicContext(req, res);
+  if (!c) return;
+  if (!c.manage) return res.status(403).json({ error: 'Only the hub owner or admin can publish topics.' });
+  const topic = c.db.hubTopics.find((t) => t.id === req.params.topicId && t.hubId === c.hub.id);
+  if (!topic) return res.status(404).json({ error: 'Topic not found.' });
+  const publish = req.body?.published !== false;
+  if (publish && topic.blocks.length === 0) return res.status(400).json({ error: 'Add some content before publishing.' });
+  dbManager.update((state) => {
+    const t = state.hubTopics.find((x) => x.id === topic.id);
+    if (t) {
+      t.status = publish ? 'published' : 'draft';
+      t.updatedAt = new Date().toISOString();
+    }
+  });
+  return res.json({ ok: true, status: publish ? 'published' : 'draft' });
+});
+
+// Delete a topic
+apiRouter.delete('/hubs/:id/topics/:topicId', (req: Request, res: Response) => {
+  const c = topicContext(req, res);
+  if (!c) return;
+  if (!c.manage) return res.status(403).json({ error: 'Only the hub owner or admin can delete topics.' });
+  const topic = c.db.hubTopics.find((t) => t.id === req.params.topicId && t.hubId === c.hub.id);
+  if (!topic) return res.status(404).json({ error: 'Topic not found.' });
+  dbManager.update((state) => {
+    state.hubTopics = state.hubTopics.filter((t) => t.id !== topic.id);
+    state.topicProgress = state.topicProgress.filter((p) => p.topicId !== topic.id);
+  });
+  return res.json({ ok: true });
+});
+
+// Student: "I have finished reading this topic" (unlocks its quiz)
+apiRouter.post('/hubs/:id/topics/:topicId/complete', (req: Request, res: Response) => {
+  const c = topicContext(req, res);
+  if (!c) return;
+  if (!c.user || !c.isActive) return res.status(403).json({ error: 'Only approved members can do this.' });
+  const topic = c.db.hubTopics.find((t) => t.id === req.params.topicId && t.hubId === c.hub.id && t.status === 'published');
+  if (!topic) return res.status(404).json({ error: 'Topic not found.' });
+  if (!visibleSubjects(c.hub, c.member).some((s) => sameName(s, topic.subject))) {
+    return res.status(403).json({ error: 'This topic is in a subject you did not choose.' });
+  }
+  dbManager.update((state) => {
+    let p = state.topicProgress.find((x) => x.hubId === c.hub.id && x.topicId === topic.id && x.userId === c.user!.id);
+    if (!p) {
+      p = { id: generateId('tp'), hubId: c.hub.id, topicId: topic.id, userId: c.user!.id, contentDone: true, attempts: 0, history: [] };
+      state.topicProgress.push(p);
+    } else {
+      p.contentDone = true;
+    }
+  });
+  return res.json({ ok: true });
+});
+
+// Student: submit the end-of-topic quiz. The server marks it and only then reveals answers and explanations.
+apiRouter.post('/hubs/:id/topics/:topicId/quiz/submit', (req: Request, res: Response) => {
+  const c = topicContext(req, res);
+  if (!c) return;
+  if (!c.user || !c.isActive) return res.status(403).json({ error: 'Only approved members can take this quiz.' });
+  const topic = c.db.hubTopics.find((t) => t.id === req.params.topicId && t.hubId === c.hub.id && t.status === 'published');
+  if (!topic) return res.status(404).json({ error: 'Topic not found.' });
+  if (!visibleSubjects(c.hub, c.member).some((s) => sameName(s, topic.subject))) {
+    return res.status(403).json({ error: 'This topic is in a subject you did not choose.' });
+  }
+  if (topic.quiz.length === 0) return res.status(400).json({ error: 'This topic has no quiz.' });
+  const before = topicProgressFor(c.db, c.hub.id, topic.id, c.user.id);
+  if (!before?.contentDone) return res.status(400).json({ error: 'Finish reading the topic before taking its quiz.' });
+
+  const given = req.body?.answers && typeof req.body.answers === 'object' ? req.body.answers : {};
+  const results = topic.quiz.map((q) => {
+    const raw = given[q.id];
+    const chosen = Number.isInteger(raw) && raw >= 0 && raw < q.options.length ? (raw as number) : null;
+    return {
+      questionId: q.id,
+      chosenIndex: chosen,
+      correct: chosen === q.answerIndex,
+      correctIndex: q.answerIndex,
+      explanation: q.explanation || null,
+    };
+  });
+  const score = results.filter((r) => r.correct).length;
+  const total = topic.quiz.length;
+  const pct = Math.round((score / total) * 100);
+  const now = new Date().toISOString();
+
+  dbManager.update((state) => {
+    const p = state.topicProgress.find((x) => x.hubId === c.hub.id && x.topicId === topic.id && x.userId === c.user!.id);
+    if (p) {
+      p.attempts += 1;
+      p.lastPct = pct;
+      p.lastAt = now;
+      p.bestPct = Math.max(p.bestPct ?? 0, pct);
+      p.history = [...p.history, { pct, at: now }].slice(-20);
+    }
+  });
+  const after = topicProgressFor(dbManager.getData(), c.hub.id, topic.id, c.user.id);
+  return res.json({ score, total, pct, passed: pct >= PASS_MARK, results, completed: isTopicCompleted(topic, after), bestPct: after?.bestPct ?? pct });
+});
+
+// Student dashboard: progress for the subjects they chose
+apiRouter.get('/hubs/:id/my-progress', (req: Request, res: Response) => {
+  const c = topicContext(req, res);
+  if (!c) return;
+  if (!c.user || !c.isActive) return res.status(403).json({ error: 'Only approved members have a dashboard.' });
+  const subjects = visibleSubjects(c.hub, c.member);
+  let totalTopics = 0;
+  let doneTopics = 0;
+  const bySubject = subjects.map((subject) => {
+    const topics = c.db.hubTopics.filter((t) => t.hubId === c.hub.id && t.status === 'published' && sameName(t.subject, subject));
+    const rows = topics.map((t) => {
+      const p = topicProgressFor(c.db, c.hub.id, t.id, c.user!.id);
+      return { topic: t, p, completed: isTopicCompleted(t, p) };
+    });
+    const completed = rows.filter((r) => r.completed).length;
+    const quizzed = rows.filter((r) => r.p && (r.p.attempts ?? 0) > 0 && r.p.bestPct !== undefined);
+    const avg = quizzed.length ? Math.round(quizzed.reduce((s, r) => s + (r.p!.bestPct ?? 0), 0) / quizzed.length) : null;
+    let verdict: 'strong' | 'average' | 'weak' | 'not_enough_data' = 'not_enough_data';
+    if (quizzed.length >= MIN_QUIZZES_FOR_VERDICT && avg !== null) verdict = avg >= STRONG_MARK ? 'strong' : avg < WEAK_MARK ? 'weak' : 'average';
+    totalTopics += topics.length;
+    doneTopics += completed;
+    return {
+      subject,
+      topicsTotal: topics.length,
+      topicsCompleted: completed,
+      progressPct: topics.length ? Math.round((completed / topics.length) * 100) : 0,
+      quizzesTaken: quizzed.length,
+      averageScorePct: avg,
+      verdict,
+      needsRevision: rows
+        .filter((r) => r.p && (r.p.attempts ?? 0) > 0 && (r.p.bestPct ?? 100) < WEAK_MARK)
+        .map((r) => ({ topicId: r.topic.id, title: r.topic.title, bestPct: r.p!.bestPct ?? 0 })),
+      topics: rows.map((r) => ({ topicId: r.topic.id, title: r.topic.title, completed: r.completed, contentDone: !!r.p?.contentDone, bestPct: r.p?.bestPct ?? null })),
+    };
+  });
+  return res.json({
+    hubId: c.hub.id,
+    overallProgressPct: totalTopics ? Math.round((doneTopics / totalTopics) * 100) : 0,
+    topicsCompleted: doneTopics,
+    topicsTotal: totalTopics,
+    strongSubjects: bySubject.filter((s) => s.verdict === 'strong').map((s) => s.subject),
+    weakSubjects: bySubject.filter((s) => s.verdict === 'weak').map((s) => s.subject),
+    passMark: PASS_MARK,
+    subjects: bySubject,
+  });
 });

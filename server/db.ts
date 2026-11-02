@@ -263,6 +263,48 @@ export interface AuditLog {
   timestamp: string;
 }
 
+export interface TopicBlock {
+  id: string;
+  type: 'text' | 'image' | 'audio' | 'video';
+  text?: string; // for text blocks
+  url?: string; // for image, audio and video blocks
+  caption?: string;
+}
+
+export interface TopicQuestion {
+  id: string;
+  question: string;
+  options: string[];
+  answerIndex: number; // never sent to students before they submit
+  explanation?: string;
+}
+
+export interface HubTopic {
+  id: string;
+  hubId: string;
+  subject: string;
+  title: string;
+  order: number;
+  status: 'draft' | 'published';
+  blocks: TopicBlock[];
+  quiz: TopicQuestion[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TopicProgress {
+  id: string;
+  hubId: string;
+  topicId: string;
+  userId: string;
+  contentDone: boolean;
+  attempts: number;
+  bestPct?: number;
+  lastPct?: number;
+  lastAt?: string;
+  history: { pct: number; at: string }[];
+}
+
 export interface Registration {
   id: string;
   quizId: string;
@@ -278,6 +320,8 @@ export interface Registration {
 
 export interface DatabaseSchema {
   registrations: Registration[];
+  hubTopics: HubTopic[];
+  topicProgress: TopicProgress[];
   users: User[];
   quizzes: Quiz[];
   questions: Question[];
@@ -314,6 +358,8 @@ const DATA_DIR = path.resolve(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'remedi_db.json');
 
 const INITIAL_DB: DatabaseSchema = {
+  hubTopics: [],
+  topicProgress: [],
   registrations: [],
   users: [
     {
@@ -486,6 +532,8 @@ class DatabaseManager {
     const schema: DatabaseSchema = {
       users: loadedUsers,
     registrations: Array.isArray(parsed.registrations) ? parsed.registrations : [],
+    hubTopics: Array.isArray(parsed.hubTopics) ? parsed.hubTopics : [],
+    topicProgress: Array.isArray(parsed.topicProgress) ? parsed.topicProgress : [],
       quizzes: parsed.quizzes || INITIAL_DB.quizzes,
       questions: parsed.questions || INITIAL_DB.questions,
       attempts: parsed.attempts || INITIAL_DB.attempts,

@@ -5,6 +5,7 @@ import { LearningHub, HubMaterial, HubMember, Quiz } from '../types.ts';
 import { HubFormModal } from '../components/HubFormModal.tsx';
 import { TopicBuilder } from '../components/TopicBuilder.tsx';
 import { TopicReader } from '../components/TopicReader.tsx';
+import { StudentDashboard } from '../components/StudentDashboard.tsx';
 import { BookOpen, Users, FileText, GraduationCap, Search, Copy, Check, X, Plus, Clock } from 'lucide-react';
 
 interface LearningHubViewProps {
@@ -32,7 +33,7 @@ export const LearningHubView: React.FC<LearningHubViewProps> = ({ focusHub, onFo
   const [matTitle, setMatTitle] = useState('');
   const [matType, setMatType] = useState<'note' | 'tutorial' | 'guide'>('note');
   const [matContent, setMatContent] = useState('');
-  const [mode, setMode] = useState<'none' | 'builder' | 'reader'>('none');
+  const [mode, setMode] = useState<'none' | 'builder' | 'reader' | 'dashboard'>('none');
 
   const say = (text: string, bad = false) => {
     setMessage({ text, bad });
@@ -205,6 +206,9 @@ export const LearningHubView: React.FC<LearningHubViewProps> = ({ focusHub, onFo
   if (hub && mode === 'reader') {
     return <TopicReader hub={hub} onBack={() => setMode('none')} />;
   }
+  if (hub && mode === 'dashboard') {
+    return <StudentDashboard hub={hub} onBack={() => setMode('none')} onStudy={() => setMode('reader')} />;
+  }
 
   return (
     <div className="space-y-4 max-w-3xl mx-auto">
@@ -336,9 +340,14 @@ export const LearningHubView: React.FC<LearningHubViewProps> = ({ focusHub, onFo
                   <p className="text-xs text-slate-600">
                     <strong>Your subjects:</strong> {(hub.myMembership?.selectedSubjects || []).join(', ') || 'None chosen'}
                   </p>
-                  <button onClick={() => setMode('reader')} className={`${btn} w-full bg-emerald-600 text-white`}>
-                    Study topics
-                  </button>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={() => setMode('reader')} className={`${btn} bg-emerald-600 text-white`}>
+                      Study topics
+                    </button>
+                    <button onClick={() => setMode('dashboard')} className={`${btn} bg-slate-900 text-white`}>
+                      My progress
+                    </button>
+                  </div>
                   <div className="flex gap-2">
                     <button onClick={() => setEditingSubjects(true)} className={`${btn} bg-slate-100 text-slate-700`}>
                       Change subjects

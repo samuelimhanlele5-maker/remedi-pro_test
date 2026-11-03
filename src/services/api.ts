@@ -104,6 +104,28 @@ export interface TopicQuizResult {
   results: { questionId: string; chosenIndex: number | null; correct: boolean; correctIndex: number; explanation: string | null }[];
 }
 
+export interface SubjectProgress {
+  subject: string;
+  topicsTotal: number;
+  topicsCompleted: number;
+  progressPct: number;
+  quizzesTaken: number;
+  averageScorePct: number | null;
+  verdict: 'strong' | 'average' | 'weak' | 'not_enough_data';
+  needsRevision: { topicId: string; title: string; bestPct: number }[];
+  topics: { topicId: string; title: string; completed: boolean; contentDone: boolean; bestPct: number | null }[];
+}
+export interface MyProgress {
+  hubId: string;
+  overallProgressPct: number;
+  topicsCompleted: number;
+  topicsTotal: number;
+  strongSubjects: string[];
+  weakSubjects: string[];
+  passMark: number;
+  subjects: SubjectProgress[];
+}
+
 export const api = {
   // Auth
   async register(data: { email: string; password: string; fullName: string; role?: string }) {
@@ -373,6 +395,10 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ subjects }),
     });
+  },
+
+  async getMyProgress(hubId: string) {
+    return request<MyProgress>(`/hubs/${hubId}/my-progress`);
   },
 
   async getTopics(hubId: string) {

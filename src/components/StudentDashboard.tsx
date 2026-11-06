@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api, MyProgress, SubjectProgress } from '../services/api.ts';
 import { ChevronLeft, CheckCircle2, BookOpen } from 'lucide-react';
+import { QuizResultsPanel } from './QuizResultsPanel.tsx';
 
 interface StudentDashboardProps {
   hub: { id: string; title: string };
@@ -69,6 +70,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ hub, onBack,
               A topic is completed when you have read it and scored at least {data.passMark}% on its quiz, or it has no quiz.
             </p>
           </div>
+
+          <QuizResultsPanel hubId={hub.id} />
 
           {data.topicsTotal === 0 ? (
             <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-xs text-slate-500">

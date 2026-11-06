@@ -172,6 +172,79 @@ export async function uploadFile(file: File): Promise<UploadedFile> {
   return data as UploadedFile;
 }
 
+export interface FlashcardDeck {
+  id: string;
+  name: string;
+  cardCount: number;
+  dueCount: number;
+}
+
+export interface Flashcard {
+  id: string;
+  deckId: string;
+  question: string;
+  answer: string;
+  dueAt: string;
+  intervalDays: number;
+  reps: number;
+  lapses: number;
+}
+
+export interface DraftCard {
+  question: string;
+  answer: string;
+}
+
+export async function getFlashcardDecks() {
+  return request<{ decks: FlashcardDeck[] }>('/flashcards/decks');
+}
+
+export async function createFlashcardDeck(name: string) {
+  return request<{ deck: FlashcardDeck }>('/flashcards/decks', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function deleteFlashcardDeck(id: string) {
+  return request<{ ok: boolean }>(`/flashcards/decks/${id}`, { method: 'DELETE' });
+}
+
+export async function getFlashcards(deckId: string) {
+  return request<{ deck: FlashcardDeck; cards: Flashcard[] }>(`/flashcards/decks/${deckId}/cards`);
+}
+
+export async function saveFlashcards(data: { deckId?: string; deckName?: string; cards: DraftCard[] }) {
+  return request<{ saved: number; deck: FlashcardDeck }>('/flashcards/cards', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteFlashcard(id: string) {
+  return request<{ ok: boolean }>(`/flashcards/cards/${id}`, { method: 'DELETE' });
+}
+
+export async function reviewFlashcard(id: string, rating: 'again' | 'hard' | 'good' | 'easy') {
+  return request<{ card: Flashcard }>(`/flashcards/cards/${id}/review`, {
+    method: 'POST',
+    body: JSON.stringify({ rating }),
+  });
+}
+
+export interface PracticeQuestion {
+  question: string;
+  options: string[];
+  answer: string;
+}
+
+export async function generateQuestionsFromImage(imageBase64: string, mimeType: string, count: number) {
+  return request<{ deckName: string; questions: PracticeQuestion[] }>('/ai/questions-from-image', {
+    method: 'POST',
+    body: JSON.stringify({ imageBase64, mimeType, count }),
+  });
+}
+
 export const api = {
   // Auth
   async register(data: { email: string; password: string; fullName: string; role?: string }) {

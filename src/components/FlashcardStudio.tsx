@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { BookOpen } from 'lucide-react';
 import {
   getFlashcardDecks,
   createFlashcardDeck,
@@ -34,9 +35,49 @@ async function compressImage(file: File, maxSide = 1600): Promise<{ base64: stri
 
 const errorText = (e: any) => e?.message || 'Something went wrong.';
 
+const LOADING_MESSAGES = [
+  'Reading your notes',
+  'Finding the key ideas',
+  'Writing your questions',
+  'Almost ready',
+];
+
+// Animated loader shown while the photo is being turned into questions.
+const NotesLoader: React.FC = () => {
+  const [step, setStep] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => setStep((s) => (s + 1) % LOADING_MESSAGES.length), 2500);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <div role="status" aria-live="polite" className="flex flex-col items-center gap-3 py-3">
+      <div className="relative w-16 h-16">
+        <div className="absolute inset-0 rounded-full border-4 border-blue-100" />
+        <div className="absolute inset-0 rounded-full border-4 border-blue-600 border-t-transparent animate-spin" />
+        <div className="absolute inset-0 flex items-center justify-center text-blue-600 animate-pulse">
+          <BookOpen className="w-6 h-6" aria-hidden="true" />
+        </div>
+      </div>
+
+      <p key={step} className="text-sm font-bold text-slate-700 transition-opacity duration-500">
+        {LOADING_MESSAGES[step]}...
+      </p>
+
+      <div className="w-40 h-1.5 rounded-full bg-slate-200 overflow-hidden">
+        <div className="h-full w-1/3 rounded-full bg-blue-600 animate-pulse" />
+      </div>
+
+      <p className="text-[11px] text-slate-500">This usually takes 20 to 40 seconds</p>
+    </div>
+  );
+};
+
 export const FlashcardStudio: React.FC = () => {
   const [decks, setDecks] = useState<FlashcardDeck[]>([]);
   const [busy, setBusy] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // practice questions
@@ -72,7 +113,7 @@ export const FlashcardStudio: React.FC = () => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    setBusy(true);
+    setGenerating(true);
     setError(null);
     setAttempts([]);
     try {
@@ -97,7 +138,7 @@ export const FlashcardStudio: React.FC = () => {
     } catch (err) {
       setError(errorText(err));
     } finally {
-      setBusy(false); // the photo only lived in memory, so nothing is kept
+      setGenerating(false); // the photo only lived in memory, so nothing is kept
     }
   };
 
@@ -278,21 +319,21 @@ export const FlashcardStudio: React.FC = () => {
 
       {/* Step 1: snap */}
       <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
-        <label
-          className={`block w-full text-center rounded-xl py-3 text-sm font-bold cursor-pointer ${
-            busy ? 'bg-slate-200 text-slate-500' : 'bg-blue-600 text-white'
-          }`}
-        >
-          {busy ? 'Reading your notes...' : 'Snap notes to get questions'}
-          <input
-            type="file"
-            accept="image/*"
-            capture="environment"
-            onChange={handlePhoto}
-            disabled={busy}
-            className="hidden"
-          />
-        </label>
+        {generating ? (
+          <NotesLoader />
+        ) : (
+          <label className="block w-full text-center rounded-xl py-3 text-sm font-bold cursor-pointer bg-blue-600 text-white">
+            Snap notes to get questions
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={handlePhoto}
+              disabled={busy}
+              className="hidden"
+            />
+          </label>
+        )}
       </div>
 
       {/* Step 2: multiple-choice questions */}

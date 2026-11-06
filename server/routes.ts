@@ -1,6 +1,7 @@
 import { randomInt } from 'crypto';
 import { hashPassword, verifyPassword, signToken, verifyToken, safeEqual } from './auth.js';
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, raw } from 'express';
+import { put } from '@vercel/blob';
 import {
   dbManager,
   User,
@@ -2782,6 +2783,33 @@ apiRouter.post('/hubs/:id/topics/:topicId/quiz/submit', (req: Request, res: Resp
 });
 
 // Student dashboard: progress for the subjects they chose
+// Upload one file (max 4 MB) and get back a public URL.
+// The browser sends the raw file as the request body.
+apiRouter.post(
+  '/uploads',
+  raw({ type: '*/*', limit: '4mb' }),
+  async (req: Request, res: Response) => {
+    const user = getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Sign in first.' });
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+      return res.status(400).json({ error: 'No file received.' });
+    }
+
+    const safeName = String(req.query.name || 'file').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
+    const contentType = String(req.headers['content-type'] || 'application/octet-stream');
+
+    try {
+      const blob = await put(`uploads/${user.id}/${Date.now()}-${safeName}`, req.body, {
+        access: 'public',
+        contentType,
+      });
+      return res.json({ url: blob.url, pathname: blob.pathname, name: safeName });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Upload failed.' });
+    }
+  }
+);
+
 // Quiz results for this student, per chosen hub subject.
 // Counts attempts on quizzes the hub links to, plus all quizzes by the hub's creator.
 apiRouter.get('/hubs/:id/my-quiz-progress', (req: Request, res: Response) => {

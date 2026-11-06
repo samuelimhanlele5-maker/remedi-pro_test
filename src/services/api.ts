@@ -126,6 +126,31 @@ export interface MyProgress {
   subjects: SubjectProgress[];
 }
 
+export interface QuizSubjectResult {
+  attemptId: string;
+  quizId: string;
+  quizTitle: string;
+  pct: number;
+  completedAt: string;
+}
+
+export interface QuizSubjectRow {
+  subject: string;
+  attempts: number;
+  averagePct: number | null;
+  bestPct: number | null;
+  latestPct: number | null;
+  verdict: 'strong' | 'average' | 'weak' | 'not_enough_data';
+  recent: QuizSubjectResult[];
+}
+
+export interface MyQuizProgress {
+  hubId: string;
+  subjects: QuizSubjectRow[];
+  strongSubjects: string[];
+  weakSubjects: string[];
+}
+
 export const api = {
   // Auth
   async register(data: { email: string; password: string; fullName: string; role?: string }) {
@@ -399,6 +424,10 @@ export const api = {
 
   async getMyProgress(hubId: string) {
     return request<MyProgress>(`/hubs/${hubId}/my-progress`);
+  },
+
+  async getMyQuizProgress(hubId: string) {
+    return request<MyQuizProgress>(`/hubs/${hubId}/my-quiz-progress`);
   },
 
   async getTopics(hubId: string) {

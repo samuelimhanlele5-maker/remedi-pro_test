@@ -2,6 +2,7 @@ import { randomInt } from 'crypto';
 import { hashPassword, verifyPassword, signToken, verifyToken, safeEqual } from './auth.js';
 import { Router, Request, Response, raw } from 'express';
 import { put } from '@vercel/blob';
+import { GoogleGenAI } from '@google/genai';
 import {
   dbManager,
   User,
@@ -2809,6 +2810,259 @@ apiRouter.post(
     }
   }
 );
+
+// Generate comprehension Q&A cards from a photo of notes. The image is not stored.
+function cleanText(value: unknown, max: number): string {
+  return typeof value === 'string' ? value.trim().slice(0, max) : '';
+}
+
+// Anki-style scheduling: each rating moves the next review date.
+function scheduleCard(card: any, rating: 'again' | 'hard' | 'good' | 'easy', now: number) {
+  let ease = Number(card.ease) || 2.5;
+  let days = Number(card.intervalDays) || 0;
+  let lapses = Number(card.lapses) || 0;
+  let dueAt: number;
+
+  if (rating === 'again') {
+    ease = Math.max(1.3, ease - 0.2);
+    lapses += 1;
+    days = 0;
+    dueAt = now + 10 * 60 * 1000;
+  } else {
+    if (rating === 'hard') {
+      ease = Math.max(1.3, ease - 0.15);
+      days = days === 0 ? 1 : Math.max(1, days * 1.2);
+    } else if (rating === 'good') {
+      days = days === 0 ? 1 : days * ease;
+    } else {
+      ease += 0.15;
+      days = days === 0 ? 4 : days * ease * 1.3;
+    }
+    days = Math.round(days * 100) / 100;
+    dueAt = now + days * 24 * 60 * 60 * 1000;
+  }
+
+  return {
+    ease,
+    intervalDays: days,
+    lapses,
+    reps: (Number(card.reps) || 0) + 1,
+    dueAt: new Date(dueAt).toISOString(),
+    lastReviewedAt: new Date(now).toISOString(),
+  };
+}
+
+function deckView(deck: any, cards: any[], now: number) {
+  const mine = cards.filter((c) => c.deckId === deck.id);
+  return {
+    id: deck.id,
+    name: deck.name,
+    cardCount: mine.length,
+    dueCount: mine.filter((c) => new Date(c.dueAt).getTime() <= now).length,
+  };
+}
+
+apiRouter.post('/ai/questions-from-image', async (req: Request, res: Response) => {
+  const user = getAuthUser(req);
+  if (!user) return res.status(401).json({ error: 'Sign in first.' });
+
+  const { imageBase64, mimeType, count } = req.body || {};
+  if (typeof imageBase64 !== 'string' || imageBase64.length === 0) {
+    return res.status(400).json({ error: 'No image received.' });
+  }
+  if (imageBase64.length > 6_000_000) {
+    return res.status(413).json({ error: 'Image is too large. Try a smaller photo.' });
+  }
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'AI is not set up yet.' });
+
+  const total = Math.min(Math.max(Number(count) || 10, 3), 20);
+  const prompt = `You are writing multiple-choice practice questions for a student, based only on the study material in this image.
+Write ${total} questions. Mix recall questions with understanding questions.
+Each question must have exactly 4 short options, with only one correct option.
+The "answer" must be copied exactly from one of the options.
+Make the wrong options plausible, but clearly wrong to someone who knows the material.
+Do not put hints in the question text.
+Pick one short subject name for the set, such as "Physics" or "Biology".
+Return only JSON in this shape:
+{"deckName":"Physics","questions":[{"question":"...","options":["...","...","...","..."],"answer":"..."}]}
+If the image has no study content, return an empty questions list.`;
+
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    const result = await ai.models.generateContent({
+      model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { inlineData: { mimeType: String(mimeType || 'image/jpeg'), data: imageBase64 } },
+            { text: prompt },
+          ],
+        },
+      ],
+      config: { responseMimeType: 'application/json' },
+    });
+
+    const parsed = JSON.parse(result.text || '{}');
+    const questions = (Array.isArray(parsed.questions) ? parsed.questions : [])
+      .map((q: any) => ({
+        question: cleanText(q?.question, 300),
+        options: Array.isArray(q?.options) ? q.options.map((o: any) => cleanText(o, 200)) : [],
+        answer: cleanText(q?.answer, 200),
+      }))
+      .filter((q: any) => q.question && q.options.length === 4 && q.options.every((o: string) => o) && q.options.includes(q.answer));
+
+    return res.json({ deckName: cleanText(parsed.deckName, 60) || 'General', questions });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Could not make questions from this photo.' });
+  }
+});
+
+apiRouter.get('/flashcards/decks', (req: Request, res: Response) => {
+  const user = getAuthUser(req);
+  if (!user) return res.status(401).json({ error: 'Sign in first.' });
+  const db = dbManager.getData();
+  const now = Date.now();
+  const decks = db.flashcardDecks
+    .filter((d: any) => d.userId === user.id)
+    .map((d: any) => deckView(d, db.flashcards, now));
+  return res.json({ decks });
+});
+
+apiRouter.post('/flashcards/decks', (req: Request, res: Response) => {
+  const user = getAuthUser(req);
+  if (!user) return res.status(401).json({ error: 'Sign in first.' });
+  const name = cleanText(req.body?.name, 60);
+  if (!name) return res.status(400).json({ error: 'Give the deck a name.' });
+
+  let deck: any = null;
+  dbManager.update((state) => {
+    deck = state.flashcardDecks.find(
+      (d: any) => d.userId === user.id && d.name.toLowerCase() === name.toLowerCase()
+    );
+    if (!deck) {
+      deck = { id: generateId('deck'), userId: user.id, name, createdAt: new Date().toISOString() };
+      state.flashcardDecks.push(deck);
+    }
+  });
+  return res.json({ deck: deckView(deck, dbManager.getData().flashcards, Date.now()) });
+});
+
+apiRouter.delete('/flashcards/decks/:id', (req: Request, res: Response) => {
+  const user = getAuthUser(req);
+  if (!user) return res.status(401).json({ error: 'Sign in first.' });
+  const deckId = String(req.params.id);
+  let found = false;
+  dbManager.update((state) => {
+    const idx = state.flashcardDecks.findIndex((d: any) => d.id === deckId && d.userId === user.id);
+    if (idx === -1) return;
+    found = true;
+    state.flashcardDecks.splice(idx, 1);
+    state.flashcards = state.flashcards.filter((c: any) => c.deckId !== deckId);
+  });
+  if (!found) return res.status(404).json({ error: 'Deck not found.' });
+  return res.json({ ok: true });
+});
+
+apiRouter.get('/flashcards/decks/:id/cards', (req: Request, res: Response) => {
+  const user = getAuthUser(req);
+  if (!user) return res.status(401).json({ error: 'Sign in first.' });
+  const db = dbManager.getData();
+  const deck = db.flashcardDecks.find((d: any) => d.id === req.params.id && d.userId === user.id);
+  if (!deck) return res.status(404).json({ error: 'Deck not found.' });
+  const cards = db.flashcards
+    .filter((c: any) => c.deckId === deck.id)
+    .sort((a: any, b: any) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime());
+  return res.json({ deck: deckView(deck, db.flashcards, Date.now()), cards });
+});
+
+apiRouter.post('/flashcards/cards', (req: Request, res: Response) => {
+  const user = getAuthUser(req);
+  if (!user) return res.status(401).json({ error: 'Sign in first.' });
+  const { deckId, deckName, cards } = req.body || {};
+  if (!Array.isArray(cards)) return res.status(400).json({ error: 'No cards received.' });
+
+  const clean = cards
+    .map((c: any) => ({ question: cleanText(c?.question, 300), answer: cleanText(c?.answer, 600) }))
+    .filter((c: any) => c.question && c.answer)
+    .slice(0, 100);
+  if (clean.length === 0) return res.status(400).json({ error: 'No valid cards to save.' });
+
+  let deck: any = null;
+  let saved = 0;
+  dbManager.update((state) => {
+    if (typeof deckId === 'string' && deckId) {
+      deck = state.flashcardDecks.find((d: any) => d.id === deckId && d.userId === user.id);
+    } else {
+      const name = cleanText(deckName, 60) || 'General';
+      deck = state.flashcardDecks.find(
+        (d: any) => d.userId === user.id && d.name.toLowerCase() === name.toLowerCase()
+      );
+      if (!deck) {
+        deck = { id: generateId('deck'), userId: user.id, name, createdAt: new Date().toISOString() };
+        state.flashcardDecks.push(deck);
+      }
+    }
+    if (!deck) return;
+
+    const now = new Date().toISOString();
+    for (const c of clean) {
+      state.flashcards.push({
+        id: generateId('card'),
+        deckId: deck.id,
+        userId: user.id,
+        question: c.question,
+        answer: c.answer,
+        createdAt: now,
+        dueAt: now, // new cards are due straight away
+        intervalDays: 0,
+        ease: 2.5,
+        reps: 0,
+        lapses: 0,
+        lastReviewedAt: null,
+      });
+      saved += 1;
+    }
+  });
+
+  if (!deck) return res.status(404).json({ error: 'Deck not found.' });
+  return res.json({ saved, deck: deckView(deck, dbManager.getData().flashcards, Date.now()) });
+});
+
+apiRouter.delete('/flashcards/cards/:id', (req: Request, res: Response) => {
+  const user = getAuthUser(req);
+  if (!user) return res.status(401).json({ error: 'Sign in first.' });
+  const cardId = String(req.params.id);
+  let found = false;
+  dbManager.update((state) => {
+    const idx = state.flashcards.findIndex((c: any) => c.id === cardId && c.userId === user.id);
+    if (idx === -1) return;
+    found = true;
+    state.flashcards.splice(idx, 1);
+  });
+  if (!found) return res.status(404).json({ error: 'Card not found.' });
+  return res.json({ ok: true });
+});
+
+apiRouter.post('/flashcards/cards/:id/review', (req: Request, res: Response) => {
+  const user = getAuthUser(req);
+  if (!user) return res.status(401).json({ error: 'Sign in first.' });
+  const rating = String(req.body?.rating || '');
+  if (!['again', 'hard', 'good', 'easy'].includes(rating)) {
+    return res.status(400).json({ error: 'Rating must be again, hard, good or easy.' });
+  }
+  const cardId = String(req.params.id);
+  let updated: any = null;
+  dbManager.update((state) => {
+    const card = state.flashcards.find((c: any) => c.id === cardId && c.userId === user.id);
+    if (!card) return;
+    Object.assign(card, scheduleCard(card, rating as 'again' | 'hard' | 'good' | 'easy', Date.now()));
+    updated = card;
+  });
+  if (!updated) return res.status(404).json({ error: 'Card not found.' });
+  return res.json({ card: updated });
+});
 
 // Quiz results for this student, per chosen hub subject.
 // Counts attempts on quizzes the hub links to, plus all quizzes by the hub's creator.

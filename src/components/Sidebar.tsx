@@ -43,6 +43,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'my-quizzes', label: 'My Quizzes', icon: FileQuestion },
     ...(isCreatorOrAdmin ? [{ id: 'create-quiz', label: 'Create Quiz', icon: PlusCircle }] : []),
     { id: 'learning-hub', label: 'Learning Hub', icon: BookOpen },
+    { id: 'flashcards', label: 'Flashcards', icon: Layers },
     { id: 'browse-hub', label: 'Browse Hub', icon: Compass },
     { id: 'analytics', label: 'Results & Analytics', icon: BarChart3 },
     { id: 'community', label: 'Community', icon: Users },

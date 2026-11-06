@@ -2782,6 +2782,67 @@ apiRouter.post('/hubs/:id/topics/:topicId/quiz/submit', (req: Request, res: Resp
 });
 
 // Student dashboard: progress for the subjects they chose
+// Quiz results for this student, per chosen hub subject.
+// Counts attempts on quizzes the hub links to, plus all quizzes by the hub's creator.
+apiRouter.get('/hubs/:id/my-quiz-progress', (req: Request, res: Response) => {
+  const c = topicContext(req, res);
+  if (!c) return;
+  if (!c.user || !c.isActive) return res.status(403).json({ error: 'Only approved members have a dashboard.' });
+
+  const subjects: string[] = visibleSubjects(c.hub, c.member);
+  const email = c.user.email.toLowerCase();
+
+  const linkedQuizIds = new Set<string>(
+    c.db.quizzes
+      .filter((q: any) => q.creatorId === c.hub.creatorId || (c.hub.assessmentQuizIds || []).includes(q.id))
+      .map((q: any) => q.id)
+  );
+  const quizTitle = new Map<string, string>(c.db.quizzes.map((q: any) => [q.id, q.title]));
+
+  const mine = c.db.attempts.filter(
+    (a: any) =>
+      linkedQuizIds.has(a.quizId) &&
+      (a.userId === c.user!.id || String(a.participantEmail || '').toLowerCase() === email)
+  );
+
+  const rows = subjects.map((subject) => {
+    const results: { attemptId: string; quizId: string; quizTitle: string; pct: number; completedAt: string }[] = [];
+    for (const a of mine) {
+      const hit = Object.entries(a.subjectScores || {}).find(([name]) => sameName(name, subject));
+      if (!hit) continue;
+      results.push({
+        attemptId: a.id,
+        quizId: a.quizId,
+        quizTitle: quizTitle.get(a.quizId) || 'Quiz',
+        pct: Math.round(Number((hit[1] as any).percentage) || 0),
+        completedAt: a.completedAt,
+      });
+    }
+    results.sort((x, y) => new Date(y.completedAt).getTime() - new Date(x.completedAt).getTime());
+
+    const avg = results.length ? Math.round(results.reduce((s, r) => s + r.pct, 0) / results.length) : null;
+    const verdict: 'strong' | 'average' | 'weak' | 'not_enough_data' =
+      avg === null ? 'not_enough_data' : avg >= STRONG_MARK ? 'strong' : avg < WEAK_MARK ? 'weak' : 'average';
+
+    return {
+      subject,
+      attempts: results.length,
+      averagePct: avg,
+      bestPct: results.length ? Math.max(...results.map((r) => r.pct)) : null,
+      latestPct: results[0]?.pct ?? null,
+      verdict,
+      recent: results.slice(0, 5),
+    };
+  });
+
+  return res.json({
+    hubId: c.hub.id,
+    subjects: rows,
+    strongSubjects: rows.filter((r) => r.verdict === 'strong').map((r) => r.subject),
+    weakSubjects: rows.filter((r) => r.verdict === 'weak').map((r) => r.subject),
+  });
+});
+
 apiRouter.get('/hubs/:id/my-progress', (req: Request, res: Response) => {
   const c = topicContext(req, res);
   if (!c) return;

@@ -23,14 +23,14 @@ type Attempt = {
 };
 
 // Shrinks a phone photo so it stays small enough to send.
-async function compressImage(file: File, maxSide = 1600): Promise<{ base64: string; mimeType: string }> {
+async function compressImage(file: File, maxSide = 1024): Promise<{ base64: string; mimeType: string }> {
   const bitmap = await createImageBitmap(file);
   const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(bitmap.width * scale);
   canvas.height = Math.round(bitmap.height * scale);
   canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  return { base64: canvas.toDataURL('image/jpeg', 0.8).split(',')[1], mimeType: 'image/jpeg' };
+  return { base64: canvas.toDataURL('image/jpeg', 0.7).split(',')[1], mimeType: 'image/jpeg' };
 }
 
 const errorText = (e: any) => e?.message || 'Something went wrong.';
@@ -78,6 +78,7 @@ export const FlashcardStudio: React.FC = () => {
   const [decks, setDecks] = useState<FlashcardDeck[]>([]);
   const [busy, setBusy] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [questionCount, setQuestionCount] = useState(5);
   const [error, setError] = useState<string | null>(null);
 
   // practice questions
@@ -118,7 +119,7 @@ export const FlashcardStudio: React.FC = () => {
     setAttempts([]);
     try {
       const { base64, mimeType } = await compressImage(file);
-      const res = await generateQuestionsFromImage(base64, mimeType, 10);
+      const res = await generateQuestionsFromImage(base64, mimeType, questionCount);
       if (res.questions.length === 0) {
         setError('No questions could be made from this photo. Try a clearer picture.');
       }
@@ -319,6 +320,19 @@ export const FlashcardStudio: React.FC = () => {
 
       {/* Step 1: snap */}
       <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+        {!generating && (
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-slate-600">Number of questions</span>
+            <select
+              value={questionCount}
+              onChange={(e) => setQuestionCount(Number(e.target.value))}
+              className="border border-slate-300 rounded-lg px-2 py-1 text-xs"
+            >
+              <option value={5}>5 (faster)</option>
+              <option value={10}>10</option>
+            </select>
+          </div>
+        )}
         {generating ? (
           <NotesLoader />
         ) : (

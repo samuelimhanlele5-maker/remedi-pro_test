@@ -151,6 +151,27 @@ export interface MyQuizProgress {
   weakSubjects: string[];
 }
 
+export interface UploadedFile {
+  url: string;
+  pathname: string;
+  name: string;
+}
+
+export async function uploadFile(file: File): Promise<UploadedFile> {
+  const token = localStorage.getItem('remedi_auth_token');
+  const res = await fetch(`/api/uploads?name=${encodeURIComponent(file.name)}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': file.type || 'application/octet-stream',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: file,
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Upload failed.');
+  return data as UploadedFile;
+}
+
 export const api = {
   // Auth
   async register(data: { email: string; password: string; fullName: string; role?: string }) {

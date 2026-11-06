@@ -11,6 +11,7 @@ import { BrowseHubView } from './views/BrowseHubView.tsx';
 import { AnalyticsView } from './views/AnalyticsView.tsx';
 import { CommunityView } from './views/CommunityView.tsx';
 import { ProfileView } from './views/ProfileView.tsx';
+import { FlashcardStudio } from './components/FlashcardStudio.tsx';
 import { SettingsView } from './views/SettingsView.tsx';
 import { AdminView } from './views/AdminView.tsx';
 import { LeaderboardModal } from './views/LeaderboardModal.tsx';
@@ -230,6 +231,8 @@ function MainApp() {
           )}
 
           {currentTab === 'community' && <CommunityView />}
+
+          {currentTab === 'flashcards' && <FlashcardStudio />}
 
           {currentTab === 'profile' && (
             <ProfileView onNavigate={handleNavigate} />

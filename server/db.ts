@@ -330,6 +330,8 @@ export interface DatabaseSchema {
   learningHubs: LearningHub[];
   hubMembers: HubMember[];
   hubMaterials: HubMaterial[];
+  flashcardDecks: any[];
+  flashcards: any[];
   follows: Follow[];
   auditLogs: AuditLog[];
   paymentRequests: PaymentRequest[];
@@ -384,6 +386,8 @@ const INITIAL_DB: DatabaseSchema = {
   learningHubs: [],
   hubMembers: [],
   hubMaterials: [],
+  flashcardDecks: [],
+  flashcards: [],
   follows: [],
   auditLogs: [],
   paymentRequests: [],
@@ -545,6 +549,8 @@ class DatabaseManager {
         isMemberOnly: mat.isMemberOnly !== false,
       })),
       follows: parsed.follows || INITIAL_DB.follows || [],
+      flashcardDecks: parsed.flashcardDecks || [],
+      flashcards: parsed.flashcards || [],
       auditLogs: parsed.auditLogs || INITIAL_DB.auditLogs,
       paymentRequests: parsed.paymentRequests || INITIAL_DB.paymentRequests,
       systemSettings: {

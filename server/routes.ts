@@ -2876,7 +2876,7 @@ apiRouter.post('/ai/questions-from-image', async (req: Request, res: Response) =
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return res.status(500).json({ error: 'AI is not set up yet.' });
 
-  const total = Math.min(Math.max(Number(count) || 10, 3), 20);
+  const total = Math.min(Math.max(Number(count) || 5, 3), 10);
   const prompt = `You are writing multiple-choice practice questions for a student, based only on the study material in this image.
 Write ${total} questions. Mix recall questions with understanding questions.
 Each question must have exactly 4 short options, with only one correct option.
@@ -2901,7 +2901,14 @@ If the image has no study content, return an empty questions list.`;
           ],
         },
       ],
-      config: { responseMimeType: 'application/json' },
+      config: {
+        responseMimeType: 'application/json',
+        // Gemini 2.5 models spend time on hidden reasoning first. Turning it off makes them faster,
+        // which is fine for writing practice questions.
+        ...(String(process.env.GEMINI_MODEL || 'gemini-2.5-flash').startsWith('gemini-2.5')
+          ? { thinkingConfig: { thinkingBudget: 0 } }
+          : {}),
+      },
     });
 
     const parsed = JSON.parse(result.text || '{}');

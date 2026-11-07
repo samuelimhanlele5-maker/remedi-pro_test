@@ -2,7 +2,6 @@ import { randomInt } from 'crypto';
 import { hashPassword, verifyPassword, signToken, verifyToken, safeEqual } from './auth.js';
 import { Router, Request, Response, raw } from 'express';
 import { put } from '@vercel/blob';
-import { GoogleGenAI } from '@google/genai';
 import {
   dbManager,
   User,
@@ -2873,7 +2872,7 @@ apiRouter.post('/ai/questions-from-image', async (req: Request, res: Response) =
   if (imageBase64.length > 6_000_000) {
     return res.status(413).json({ error: 'Image is too large. Try a smaller photo.' });
   }
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return res.status(500).json({ error: 'AI is not set up yet.' });
 
   const total = Math.min(Math.max(Number(count) || 5, 3), 10);
@@ -2888,30 +2887,39 @@ Return only JSON in this shape:
 {"deckName":"Physics","questions":[{"question":"...","options":["...","...","...","..."],"answer":"..."}]}
 If the image has no study content, return an empty questions list.`;
 
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+  const type = allowedTypes.includes(String(mimeType)) ? String(mimeType) : 'image/jpeg';
+
   try {
-    const ai = new GoogleGenAI({ apiKey });
-    const result = await ai.models.generateContent({
-      model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            { inlineData: { mimeType: String(mimeType || 'image/jpeg'), data: imageBase64 } },
-            { text: prompt },
-          ],
-        },
-      ],
-      config: {
-        responseMimeType: 'application/json',
-        // Gemini 2.5 models spend time on hidden reasoning first. Turning it off makes them faster,
-        // which is fine for writing practice questions.
-        ...(String(process.env.GEMINI_MODEL || 'gemini-2.5-flash').startsWith('gemini-2.5')
-          ? { thinkingConfig: { thinkingBudget: 0 } }
-          : {}),
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
       },
+      body: JSON.stringify({
+        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+        response_format: { type: 'json_object' },
+        max_tokens: 2000,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt },
+              { type: 'image_url', image_url: { url: `data:${type};base64,${imageBase64}`, detail: 'low' } },
+            ],
+          },
+        ],
+      }),
     });
 
-    const parsed = JSON.parse(result.text || '{}');
+    const data: any = await response.json();
+    if (!response.ok) {
+      return res.status(502).json({ error: data?.error?.message || 'The AI service could not answer. Try again.' });
+    }
+
+    const text: string = data?.choices?.[0]?.message?.content || '{}';
+    const parsed = JSON.parse(text);
     const questions = (Array.isArray(parsed.questions) ? parsed.questions : [])
       .map((q: any) => ({
         question: cleanText(q?.question, 300),

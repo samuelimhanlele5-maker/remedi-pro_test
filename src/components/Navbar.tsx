@@ -48,9 +48,11 @@ export const Navbar: React.FC<NavbarProps> = ({
           onClick={() => onSelectTab('dashboard')}
           className="flex items-center gap-2.5 text-left group"
         >
-          <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center font-bold text-white shadow-sm shadow-blue-500/20 group-hover:bg-blue-500 transition-colors">
-            R
-          </div>
+          <img
+            src="/icon-192.png"
+            alt="Remedi Pro"
+            className="w-8 h-8 rounded-lg shadow-sm shadow-blue-500/20 group-hover:opacity-90 transition-opacity"
+          />
           <div>
             <span className="text-lg font-bold tracking-tight text-white block leading-none">
               Remedi Pro

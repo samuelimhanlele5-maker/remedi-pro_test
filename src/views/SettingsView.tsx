@@ -12,6 +12,15 @@ import {
 } from 'lucide-react';
 
 export const SettingsView: React.FC = () => {
+  const [darkMode, setDarkMode] = useState(() => document.documentElement.classList.contains('dark'));
+
+  const toggleDark = () => {
+    const next = !darkMode;
+    setDarkMode(next);
+    document.documentElement.classList.toggle('dark', next);
+    localStorage.setItem('remedi-theme', next ? 'dark' : 'light');
+  };
+
   const { user, resetPassword } = useAuth();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -144,6 +153,32 @@ export const SettingsView: React.FC = () => {
           </button>
         </div>
       </form>
+
+      {/* Appearance */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 space-y-4">
+        <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Appearance</h2>
+        <div className="flex items-center justify-between">
+          <div>
+            <span className="text-xs font-bold text-slate-800 block">Dark mode</span>
+            <span className="text-[11px] text-slate-400">Easier on the eyes at night. Saved on this device.</span>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={darkMode}
+            onClick={toggleDark}
+            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+              darkMode ? 'bg-blue-600' : 'bg-slate-300'
+            }`}
+          >
+            <span
+              className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                darkMode ? 'translate-x-5' : 'translate-x-0.5'
+              }`}
+            />
+          </button>
+        </div>
+      </div>
 
       {/* CBT Environment Preferences */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 space-y-4">
